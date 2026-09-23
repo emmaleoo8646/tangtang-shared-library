@@ -1,0 +1,14 @@
+{
+  "name": "tangtang-shared-library",
+  "private": true,
+  "version": "0.1.0",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "api:dev": "npm --prefix services/api run start:dev",
+    "api:check": "npm --prefix services/api run check",
+    "admin:dev": "npm --prefix apps/admin run dev",
+    "admin:check": "npm --prefix apps/admin run check"
+  }
+}

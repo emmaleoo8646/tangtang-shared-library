@@ -1,0 +1,128 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum FamilyStatus {
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+enum AgeBand {
+  AGE_0_3
+  AGE_4_6
+  AGE_7_9
+  AGE_10_12
+  AGE_13_PLUS
+}
+
+enum BookCondition {
+  LIKE_NEW
+  GOOD
+  FAIR
+  WELL_LOVED
+}
+
+enum BookStatus {
+  DRAFT
+  AVAILABLE
+  RESERVED
+  ON_LOAN
+  OFF_SHELF
+}
+
+enum AiReviewStatus {
+  NOT_REQUESTED
+  NEEDS_CONFIRMATION
+  CONFIRMED
+  FAILED
+}
+
+enum LoanStatus {
+  REQUESTED
+  APPROVED
+  HANDOFF_AGREED
+  LENT
+  RETURN_REQUESTED
+  RETURNED
+  CANCELLED
+  REJECTED
+  EXPIRED
+}
+
+model Family {
+  id              String         @id @default(cuid())
+  phoneLookupHash String?        @unique
+  phoneCiphertext String?
+  displayName     String
+  status          FamilyStatus   @default(ACTIVE)
+  children        ChildProfile[]
+  books           Book[]
+  borrowedLoans   Loan[]         @relation("BorrowerFamily")
+  ownedLoans      Loan[]         @relation("OwnerFamily")
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+}
+
+model ChildProfile {
+  id                 String   @id @default(cuid())
+  familyId           String
+  family             Family   @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  nickname           String
+  ageBand            AgeBand
+  readingPreferences String[] @default([])
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([familyId])
+}
+
+model Book {
+  id               String         @id @default(cuid())
+  ownerFamilyId    String
+  ownerFamily      Family         @relation(fields: [ownerFamilyId], references: [id], onDelete: Restrict)
+  title            String
+  author           String?
+  summary          String?
+  category         String?
+  suggestedAgeBand AgeBand?
+  condition        BookCondition
+  status           BookStatus     @default(DRAFT)
+  aiReviewStatus   AiReviewStatus @default(NOT_REQUESTED)
+  coverObjectKey   String?
+  loans            Loan[]
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([ownerFamilyId, status])
+  @@index([title])
+  @@index([category, suggestedAgeBand])
+}
+
+model Loan {
+  id                       String     @id @default(cuid())
+  bookId                   String
+  book                     Book       @relation(fields: [bookId], references: [id], onDelete: Restrict)
+  ownerFamilyId            String
+  ownerFamily              Family     @relation("OwnerFamily", fields: [ownerFamilyId], references: [id], onDelete: Restrict)
+  borrowerFamilyId         String
+  borrowerFamily           Family     @relation("BorrowerFamily", fields: [borrowerFamilyId], references: [id], onDelete: Restrict)
+  status                   LoanStatus @default(REQUESTED)
+  handoffDetailsCiphertext String?
+  requestedAt              DateTime   @default(now())
+  approvedAt               DateTime?
+  lentAt                   DateTime?
+  dueAt                    DateTime?
+  returnedAt               DateTime?
+  createdAt                DateTime   @default(now())
+  updatedAt                DateTime   @updatedAt
+
+  @@index([bookId, status])
+  @@index([ownerFamilyId, status])
+  @@index([borrowerFamilyId, status])
+}

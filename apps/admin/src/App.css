@@ -1,0 +1,47 @@
+main {
+  width: min(1120px, calc(100% - 40px));
+  margin: 0 auto;
+  padding: 32px 0 48px;
+}
+
+header { display: flex; align-items: center; gap: 14px; margin-bottom: 28px; }
+.brand-mark { display: grid; width: 52px; height: 52px; place-items: center; border-radius: 18px; background: #ffd56b; font-size: 25px; }
+h1, h2, h3, p { margin: 0; }
+h1 { font-size: 22px; }
+h2 { max-width: 620px; font-size: clamp(32px, 5vw, 58px); line-height: 1.08; }
+h3 { font-size: 22px; }
+.eyebrow { color: #a44c32; font-size: 12px; font-weight: 800; letter-spacing: .12em; }
+.environment { margin-left: auto; padding: 8px 12px; border: 1px solid #ead9be; border-radius: 999px; color: #725f4d; font-size: 13px; }
+
+.welcome {
+  display: grid;
+  grid-template-columns: 1fr 330px;
+  gap: 32px;
+  padding: 42px;
+  border-radius: 32px;
+  background: #ffe2d5;
+}
+
+.welcome > div:first-child > p:last-child { max-width: 650px; margin-top: 18px; color: #755e53; line-height: 1.7; }
+.health { align-self: end; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; padding: 20px; border-radius: 22px; background: rgba(255, 255, 255, .76); }
+.health .dot { width: 12px; height: 12px; margin-top: 4px; border-radius: 50%; background: #c7b9a9; }
+.health.ready .dot { background: #4a9b67; }
+.health.offline .dot { background: #d05c4f; }
+.health small, .health strong { display: block; }
+.health button { grid-column: 1 / -1; margin-top: 14px; }
+
+button { border: 0; border-radius: 12px; padding: 11px 14px; background: #4e342e; color: white; font: inherit; font-weight: 700; cursor: pointer; }
+button:disabled { cursor: default; opacity: .58; }
+
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 18px; }
+article { position: relative; min-height: 185px; padding: 24px; border: 1px solid #eee2d0; border-radius: 24px; background: white; }
+article .count { position: absolute; top: 18px; right: 18px; display: grid; width: 34px; height: 34px; place-items: center; border-radius: 50%; background: #fff1c7; font-weight: 800; }
+article p { margin: 12px 0 30px; color: #78695d; line-height: 1.55; }
+article button { margin-top: auto; background: #f3eee6; color: #75685d; font-size: 12px; }
+footer { padding-top: 34px; color: #9a8b7d; text-align: center; font-size: 13px; }
+
+@media (max-width: 760px) {
+  .welcome { grid-template-columns: 1fr; padding: 28px; }
+  .grid { grid-template-columns: 1fr; }
+  .environment { display: none; }
+}
