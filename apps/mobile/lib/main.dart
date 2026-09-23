@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import 'prototype_pages.dart';
+
 const apiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
   defaultValue: 'http://10.0.2.2:3000',
@@ -54,6 +56,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   String _apiMessage = '本地服务尚未检查';
   bool _checking = false;
+  int _selectedIndex = 0;
 
   Future<void> _checkApi() async {
     setState(() {
@@ -89,169 +92,190 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
-          children: [
-            Row(
+      body: IndexedStack(
+        index: _selectedIndex,
+        children: [
+          SafeArea(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
               children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFD56B),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: const Icon(Icons.auto_stories_rounded),
-                ),
-                const SizedBox(width: 12),
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '糖糖的共享书屋',
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      Text('让旧书遇见新的小读者'),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  tooltip: '消息',
-                  onPressed: () {},
-                  icon: const Icon(Icons.notifications_none_rounded),
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFE2D5),
-                borderRadius: BorderRadius.circular(28),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    '今天想读什么？',
-                    style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
-                  ),
-                  const SizedBox(height: 6),
-                  const Text('按书名、分类或年龄段找一本好书'),
-                  const SizedBox(height: 18),
-                  FilledButton.icon(
-                    onPressed: () {},
-                    icon: const Icon(Icons.search_rounded),
-                    label: const Text('去找书'),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 18),
-            Row(
-              children: [
-                Expanded(
-                  child: _ActionCard(
-                    icon: Icons.photo_camera_outlined,
-                    title: '拍照发布',
-                    subtitle: 'AI 帮忙识别，家长确认后发布',
-                    color: const Color(0xFFE4F3E8),
-                    onTap: () {},
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _ActionCard(
-                    icon: Icons.assignment_turned_in_outlined,
-                    title: '借还待办',
-                    subtitle: '申请、交接与归还都由家长确认',
-                    color: const Color(0xFFE7EDFF),
-                    onTap: () {},
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 18),
-            Card(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(22),
-              ),
-              child: const Padding(
-                padding: EdgeInsets.all(18),
-                child: Row(
+                Row(
                   children: [
-                    CircleAvatar(
-                      backgroundColor: Color(0xFFFFF1C7),
-                      child: Icon(Icons.shield_outlined),
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFD56B),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: const Icon(Icons.auto_stories_rounded),
                     ),
-                    SizedBox(width: 12),
-                    Expanded(
+                    const SizedBox(width: 12),
+                    const Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            '家庭隐私优先',
-                            style: TextStyle(fontWeight: FontWeight.w700),
+                            '糖糖的共享书屋',
+                            style: TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
-                          SizedBox(height: 3),
-                          Text('不公开孩子真实姓名、联系方式和家庭住址'),
+                          Text('让旧书遇见新的小读者'),
                         ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: '消息',
+                      onPressed: () => setState(() => _selectedIndex = 2),
+                      icon: const Icon(Icons.notifications_none_rounded),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFE2D5),
+                    borderRadius: BorderRadius.circular(28),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '今天想读什么？',
+                        style: TextStyle(
+                          fontSize: 26,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text('按书名、分类或年龄段找一本好书'),
+                      const SizedBox(height: 18),
+                      FilledButton.icon(
+                        onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const SearchDemoPage(),
+                          ),
+                        ),
+                        icon: const Icon(Icons.search_rounded),
+                        label: const Text('去找书'),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _ActionCard(
+                        icon: Icons.photo_camera_outlined,
+                        title: '拍照发布',
+                        subtitle: 'AI 帮忙识别，家长确认后发布',
+                        color: const Color(0xFFE4F3E8),
+                        onTap: () => setState(() => _selectedIndex = 1),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _ActionCard(
+                        icon: Icons.assignment_turned_in_outlined,
+                        title: '借还待办',
+                        subtitle: '申请、交接与归还都由家长确认',
+                        color: const Color(0xFFE7EDFF),
+                        onTap: () => setState(() => _selectedIndex = 2),
                       ),
                     ),
                   ],
                 ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Card(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(22),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Row(
-                  children: [
-                    Icon(
-                      _apiMessage == '服务连接正常'
-                          ? Icons.cloud_done_outlined
-                          : Icons.cloud_outlined,
+                const SizedBox(height: 18),
+                const PrototypeBanner(),
+                const SizedBox(height: 12),
+                const DemoBookStrip(),
+                const SizedBox(height: 18),
+                Card(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(22),
+                  ),
+                  child: const Padding(
+                    padding: EdgeInsets.all(18),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          backgroundColor: Color(0xFFFFF1C7),
+                          child: Icon(Icons.shield_outlined),
+                        ),
+                        SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '家庭隐私优先',
+                                style: TextStyle(fontWeight: FontWeight.w700),
+                              ),
+                              SizedBox(height: 3),
+                              Text('不公开孩子真实姓名、联系方式和家庭住址'),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(child: Text(_apiMessage)),
-                    TextButton(
-                      onPressed: _checking ? null : _checkApi,
-                      child: Text(_checking ? '检查中' : '检查服务'),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
+                const SizedBox(height: 12),
+                Card(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(22),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Row(
+                      children: [
+                        Icon(
+                          _apiMessage == '服务连接正常'
+                              ? Icons.cloud_done_outlined
+                              : Icons.cloud_outlined,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(child: Text(_apiMessage)),
+                        TextButton(
+                          onPressed: _checking ? null : _checkApi,
+                          child: Text(_checking ? '检查中' : '检查服务'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+          const PublishDemoPage(),
+          const InboxDemoPage(),
+          const MyLibraryDemoPage(),
+        ],
       ),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: 0,
+        selectedIndex: _selectedIndex,
+        onDestinationSelected: (index) =>
+            setState(() => _selectedIndex = index),
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.explore_outlined),
             label: '找书',
           ),
           NavigationDestination(
-            icon: Icon(Icons.library_books_outlined),
-            label: '书屋',
+            icon: Icon(Icons.add_circle_outline_rounded),
+            label: '发布',
           ),
           NavigationDestination(
-            icon: Icon(Icons.checklist_rounded),
-            label: '待办',
+            icon: Icon(Icons.notifications_none_rounded),
+            label: '消息',
           ),
           NavigationDestination(
-            icon: Icon(Icons.family_restroom_rounded),
-            label: '我的',
+            icon: Icon(Icons.auto_stories_outlined),
+            label: '我的书屋',
           ),
         ],
       ),
