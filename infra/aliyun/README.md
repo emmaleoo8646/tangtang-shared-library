@@ -1,30 +1,44 @@
-# 阿里云 ECS 部署
+# 阿里云 ECS 受控测试部署
 
-此目录提供单台 ECS 的 HTTPS 站点、NestJS API 和 PostgreSQL 容器。部署前需确认域名已完成适用的备案并解析到 ECS，安全组放通 80/443，服务器安装 Docker Engine 与 Compose 插件。Caddy 会为已解析的域名申请证书。
+目标机器是北京 ECS `i-2zej0u3aakz5svx9dr4x`，测试域名为 `library.douwuyou.cn`。机器上已有家庭日记站占用 80/443；共享书屋只在 Docker 内部提供 HTTP，由现有 Nginx 转发并沿用其 Certbot 证书续期服务。共享书屋的数据库和 API 不映射到公网端口。
 
-## 首次部署
+## 首次准备
 
-1. 在 ECS 上创建一个专用部署目录，例如 `/srv/tangtang-library`。在其 `shared/.env` 按 `infra/aliyun/.env.example` 填写域名、数据库密码、至少 32 位的 `AUTH_SECRET`、阿里云短信签名和模板，以及只允许发送短信的 RAM 凭据。短信模板参数名为 `code`。受控测试阶段将 `TEST_PHONE_ALLOWLIST` 设为允许登录的测试手机号，以英文逗号分隔。不要把真实 `.env` 传入 Git。
-2. 在本地仓库根目录运行部署脚本，它从当前 Git 提交将源码直接传到 ECS，适用于先部署、再推 GitHub 的顺序：
+1. 在阿里云 DNS 为 `library` 新增 A 记录，指向这台 ECS 的公网 IP。确认 `douwuyou.cn` 的备案与当前站点信息适用。
+2. 在服务器 `/srv/tangtang-library/shared/.env` 填写 `infra/aliyun/.env.example` 中的变量。文件权限设为 `600`。`POSTGRES_PASSWORD` 和 `AUTH_SECRET` 各用独立随机值；`DATABASE_URL` 中的密码须与前者一致。不要把真实 `.env` 传到 Git。受控测试期必须设置 `TEST_PHONE_ALLOWLIST` 为获准手机号，使用英文逗号分隔。
+3. 阿里云短信尚未开通时，短信相关变量可以留空，但线上无法登录。待账号持有人开通短信、签名与模板获批后，在服务器填写仅有发短信权限的 RAM 凭据，再重建 API 容器。模板变量名必须为 `code`。
 
-   ```bash
-   bash scripts/deploy-aliyun.sh root@ECS地址 /srv/tangtang-library 已备案的测试域名
-   ```
+## 发布应用
 
-3. 脚本先备份既有数据库，再构建并启动容器、等待 `https://域名/health` 通过。随后在两台浏览器上完成注册、发布、借阅和归还验收。API 容器启动时自动执行 `prisma migrate deploy`。若线上健康检查失败，检查 DNS、证书与容器日志；保留前一版 `releases` 目录供回滚。
-
-## 备份与更新
-
-升级前先将数据库备份到服务器上仓库外的受限目录，并把备份同步到独立位置：
+在仓库根目录运行：
 
 ```bash
-umask 077
-mkdir -p ~/tangtang-backups
-docker compose -p tangtang-library --env-file /srv/tangtang-library/shared/.env -f /srv/tangtang-library/current/infra/aliyun/compose.yaml exec -T db pg_dump -U tangtang -Fc tangtang_library > ~/tangtang-backups/tangtang-$(date +%Y%m%d-%H%M%S).dump
+bash scripts/deploy-aliyun.sh alog-prod /srv/tangtang-library library.douwuyou.cn
 ```
 
-更新代码后再次运行部署脚本，检查 `/health` 与容器日志。回滚应用使用上一版 `releases` 目录重建；数据库结构回滚需要先恢复相应版本的备份，不能直接反向执行迁移。恢复前停止 API，在空数据库中用 `pg_restore -U tangtang -d tangtang_library --clean --if-exists` 导入对应备份，然后启动 API。至少每月做一次隔离恢复演练。
+脚本从当前 Git 提交打包上传，适用于先部署、再推送 GitHub。它会先备份已有共享书屋数据库，再构建、迁移并启动容器，确认内部 API 健康后更新 `current` 链接。更新前要先提交本地代码，因为未提交的文件不会进入发布包。
 
-## 上线边界
+## 接入现有 Nginx 和 HTTPS
 
-公网开放前需核对备案、短信签名模板、隐私政策与用户协议；目前图片上传、AI 识书和举报处理尚未实现。站点应先作为受控测试站使用，勿邀请真实家庭或上传个人资料。数据库和 API 不向公网映射端口；只开放 HTTPS 站点。
+应用容器就绪、DNS 生效后，先安装 HTTP 的 ACME 路由：
+
+```bash
+bash scripts/install-aliyun-ingress.sh alog-prod http
+```
+
+使用现有家庭日记 Compose 的 Certbot 服务，为 `library.douwuyou.cn` 签发证书。其 `certbot_config` 和 `certbot_webroot` 卷已用于现有站点，续期定时任务会处理卷中的新证书。签发成功后执行：
+
+```bash
+bash scripts/install-aliyun-ingress.sh alog-prod https
+curl --fail https://library.douwuyou.cn/health
+```
+
+入口脚本会定位当前运行中 Nginx 所挂载的模板，备份原文件，追加共享书屋配置，验证 Nginx 后热重载。家庭日记发布新版本时，该项目可能换用新的模板；随后重新执行上述 HTTP、HTTPS 两步，确认 `https://library.douwuyou.cn/health` 仍可访问。
+
+## 验收和备份
+
+短信服务配置完成后，用两个获准手机号检查：登录、发布、申请借阅、书主批准、双方确认借出、申请续借、双方确认归还，以及刷新后数据保留。只有这些步骤通过，才视为受控测试版可用。
+
+更新前脚本将数据库备份到服务器 `/srv/tangtang-library/shared/backups/`。应将备份另存到独立位置并每月做隔离恢复演练。应用可切回 `releases` 中的旧版，数据库结构变化需要用对应备份恢复，不能直接反向执行迁移。
+
+当前测试版没有图片上传、AI 识书和举报后台。只邀请获准的测试家庭，不收集不必要的儿童资料。公网开放前需补齐隐私政策和用户协议。

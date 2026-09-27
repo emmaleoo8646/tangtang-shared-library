@@ -1,4 +1,4 @@
-{$SITE_DOMAIN} {
+:80 {
   encode zstd gzip
   header {
     X-Content-Type-Options nosniff

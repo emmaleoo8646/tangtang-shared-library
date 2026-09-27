@@ -1054,6 +1054,11 @@ function App() {
           </>
         )}
       </main>
+      <footer className="site-footer">
+        <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">
+          陕ICP备2026026598号-1
+        </a>
+      </footer>
       <nav className="mobile-nav" aria-label="底部导航">
         {nav.map((item) => (
           <button

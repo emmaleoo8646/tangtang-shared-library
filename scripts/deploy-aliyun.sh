@@ -51,15 +51,14 @@ fi
 
 ssh "$deploy_target" "docker compose -p tangtang-library --env-file '$shared_env' -f '$compose_file' up -d --build"
 
-health_url="https://$site_domain/health"
 for attempt in {1..30}; do
-  if curl --fail --silent --show-error --max-time 5 "$health_url" 2>/dev/null | grep -Fq '"service":"tangtang-api"'; then
+  if ssh "$deploy_target" "docker compose -p tangtang-library --env-file '$shared_env' -f '$compose_file' exec -T api node -e \"fetch('http://127.0.0.1:3000/health').then(r=>r.json()).then(v=>{if(v.service!=='tangtang-api')process.exit(1)}).catch(()=>process.exit(1))\"" 2>/dev/null; then
     ssh "$deploy_target" "ln -sfn '$release_dir' '$deploy_root/current'"
-    echo "部署成功：$health_url"
+    echo "容器已就绪。请完成共享入口的 DNS、证书和 HTTPS 验收：https://$site_domain/health"
     exit 0
   fi
   sleep 2
 done
 
-echo "容器已启动，但 $health_url 未通过健康检查。请检查 DNS、证书和容器日志；本次未更新 current 链接。" >&2
+echo "容器已启动，但内部 API 健康检查未通过；本次未更新 current 链接。" >&2
 exit 1

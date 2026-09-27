@@ -27,10 +27,10 @@ services:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
       AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET}
       WEB_ORIGIN: https://${SITE_DOMAIN:?set SITE_DOMAIN}
-      ALIYUN_SMS_SIGN_NAME: ${ALIYUN_SMS_SIGN_NAME:?set ALIYUN_SMS_SIGN_NAME}
-      ALIYUN_SMS_TEMPLATE_CODE: ${ALIYUN_SMS_TEMPLATE_CODE:?set ALIYUN_SMS_TEMPLATE_CODE}
-      ALIBABA_CLOUD_ACCESS_KEY_ID: ${ALIBABA_CLOUD_ACCESS_KEY_ID:?set ALIBABA_CLOUD_ACCESS_KEY_ID}
-      ALIBABA_CLOUD_ACCESS_KEY_SECRET: ${ALIBABA_CLOUD_ACCESS_KEY_SECRET:?set ALIBABA_CLOUD_ACCESS_KEY_SECRET}
+      ALIYUN_SMS_SIGN_NAME: ${ALIYUN_SMS_SIGN_NAME:-}
+      ALIYUN_SMS_TEMPLATE_CODE: ${ALIYUN_SMS_TEMPLATE_CODE:-}
+      ALIBABA_CLOUD_ACCESS_KEY_ID: ${ALIBABA_CLOUD_ACCESS_KEY_ID:-}
+      ALIBABA_CLOUD_ACCESS_KEY_SECRET: ${ALIBABA_CLOUD_ACCESS_KEY_SECRET:-}
       TEST_PHONE_ALLOWLIST: ${TEST_PHONE_ALLOWLIST:-}
   web:
     build:
@@ -41,15 +41,16 @@ services:
       - api
     environment:
       SITE_DOMAIN: ${SITE_DOMAIN:?set SITE_DOMAIN}
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    volumes:
-      - caddy_data:/data
-      - caddy_config:/config
+    networks:
+      default: {}
+      family_diary_edge:
+        aliases:
+          - tangtang-library-web
 
 volumes:
   postgres_data:
-  caddy_data:
-  caddy_config:
+
+networks:
+  family_diary_edge:
+    external: true
+    name: family-diary_edge
