@@ -1,7 +1,7 @@
 FROM node:24-bookworm-slim AS builder
 WORKDIR /app
 COPY apps/web/package.json apps/web/package-lock.json ./
-RUN npm ci
+RUN npm ci --registry=https://registry.npmmirror.com --fetch-retries=2 --fetch-timeout=30000
 COPY apps/web/ ./
 RUN npm run build
 
