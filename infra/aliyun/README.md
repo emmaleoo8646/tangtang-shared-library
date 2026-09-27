@@ -8,6 +8,14 @@
 2. 在服务器 `/srv/tangtang-library/shared/.env` 填写 `infra/aliyun/.env.example` 中的变量。文件权限设为 `600`。`POSTGRES_PASSWORD` 和 `AUTH_SECRET` 各用独立随机值；`DATABASE_URL` 中的密码须与前者一致。不要把真实 `.env` 传到 Git。受控测试期必须设置 `TEST_EMAIL_ALLOWLIST` 为获准邮箱，使用英文逗号分隔。
 3. 注册验证和密码找回通过 SMTP 发送邮件。账号持有人需准备 SMTP 主机、465 或 587 端口、发件人地址和授权码，在服务器配置 `SMTP_*` 后重建 API 容器。发件授权码只保存在服务器，不传入 Git 或聊天。未配置邮件服务时，生产环境无法注册或找回密码。
 
+使用 163 邮箱时，在网易邮箱设置中开启 SMTP 服务并生成客户端授权码。服务器先配置 `SMTP_HOST=smtp.163.com`、`SMTP_PORT=465`、`SMTP_USER` 和相同的 `SMTP_FROM`。账号持有人从自己的终端运行以下命令，在无回显提示下输入授权码；不要把授权码放进命令参数或聊天：
+
+```bash
+ssh -tt alog-prod 'bash /srv/tangtang-library/current/scripts/configure-aliyun-smtp-163.sh'
+```
+
+保存后由运维人员重建 API 容器并进行真实邮件验收。
+
 ## 发布应用
 
 在仓库根目录运行：
