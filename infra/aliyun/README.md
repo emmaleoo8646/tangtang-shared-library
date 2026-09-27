@@ -14,7 +14,11 @@
 ssh -tt alog-prod 'bash /srv/tangtang-library/current/scripts/configure-aliyun-smtp-163.sh'
 ```
 
-保存后由运维人员重建 API 容器并进行真实邮件验收。
+更换为专用 163 邮箱时，在命令末尾传入新邮箱地址；脚本会把发件账号、显示名和授权码一起写入私有配置。保存后由运维人员重建 API 容器并进行真实邮件验收。
+
+```bash
+ssh -tt alog-prod 'bash /srv/tangtang-library/current/scripts/configure-aliyun-smtp-163.sh library_sender@163.com'
+```
 
 ## 发布应用
 

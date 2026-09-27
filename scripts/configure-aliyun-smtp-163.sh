@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-env_file=${1:-/srv/tangtang-library/shared/.env}
+account=${1:-}
+env_file=${2:-/srv/tangtang-library/shared/.env}
+
+if [[ $# -gt 2 ]] || [[ -n $account && ! $account =~ ^[A-Za-z0-9._-]+@163\.com$ ]]; then
+  echo "用法: configure-aliyun-smtp-163.sh [新发件邮箱@163.com] [环境文件]" >&2
+  exit 2
+fi
 
 if [[ ! -t 0 ]]; then
   echo "请在交互式终端中运行，授权码不会回显。" >&2
   exit 2
 fi
-if [[ ! -f $env_file ]] || ! grep -q '^SMTP_PASSWORD=' "$env_file"; then
-  echo "找不到共享书屋的 SMTP_PASSWORD 配置项。" >&2
+if [[ ! -f $env_file ]] || ! grep -q '^SMTP_PASSWORD=' "$env_file" || ! grep -q '^SMTP_USER=' "$env_file" || ! grep -q '^SMTP_FROM=' "$env_file"; then
+  echo "找不到共享书屋的 SMTP 配置项。" >&2
   exit 2
 fi
 
@@ -25,6 +31,8 @@ temp_file=$(mktemp "${env_file}.tmp.XXXXXX")
 trap 'rm -f "$temp_file"; unset smtp_password' EXIT
 while IFS= read -r line || [[ -n $line ]]; do
   case $line in
+    SMTP_USER=*) if [[ -n $account ]]; then printf 'SMTP_USER=%s\n' "$account"; else printf '%s\n' "$line"; fi ;;
+    SMTP_FROM=*) if [[ -n $account ]]; then printf 'SMTP_FROM="糖糖的共享书屋 <%s>"\n' "$account"; else printf '%s\n' "$line"; fi ;;
     SMTP_PASSWORD=*) printf 'SMTP_PASSWORD=%s\n' "$smtp_password" ;;
     *) printf '%s\n' "$line" ;;
   esac
