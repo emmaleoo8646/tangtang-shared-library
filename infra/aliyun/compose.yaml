@@ -1,0 +1,55 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tangtang_library
+      POSTGRES_USER: tangtang
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tangtang -d tangtang_library"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/aliyun/api.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET}
+      WEB_ORIGIN: https://${SITE_DOMAIN:?set SITE_DOMAIN}
+      ALIYUN_SMS_SIGN_NAME: ${ALIYUN_SMS_SIGN_NAME:?set ALIYUN_SMS_SIGN_NAME}
+      ALIYUN_SMS_TEMPLATE_CODE: ${ALIYUN_SMS_TEMPLATE_CODE:?set ALIYUN_SMS_TEMPLATE_CODE}
+      ALIBABA_CLOUD_ACCESS_KEY_ID: ${ALIBABA_CLOUD_ACCESS_KEY_ID:?set ALIBABA_CLOUD_ACCESS_KEY_ID}
+      ALIBABA_CLOUD_ACCESS_KEY_SECRET: ${ALIBABA_CLOUD_ACCESS_KEY_SECRET:?set ALIBABA_CLOUD_ACCESS_KEY_SECRET}
+      TEST_PHONE_ALLOWLIST: ${TEST_PHONE_ALLOWLIST:-}
+  web:
+    build:
+      context: ../..
+      dockerfile: infra/aliyun/web.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:?set SITE_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:

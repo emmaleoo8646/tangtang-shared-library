@@ -1,15 +1,16 @@
 # 糖糖的共享书屋
 
-一个由家长管理家庭账号、帮助孩子安全共享旧书并完成借还闭环的 Android App。首发目标设备为 HarmonyOS 4.2.0 华为手机，客户端采用 Flutter Android；iOS 暂缓。
+一个由家长管理家庭账号、帮助孩子安全共享旧书并完成借还闭环的项目。当前产品路线为手机浏览器优先的 Web 版；Flutter Android 原型保留作为历史验证资料。
 
 ## 工程结构
 
-- `apps/mobile`：Flutter Android 客户端
+- `apps/web`：连接真实 API 的响应式 Web 站点
+- `apps/mobile`：Flutter Android 历史原型
 - `apps/admin`：举报与运营处理后台
 - `services/api`：NestJS API 与 Prisma 数据层
 - `packages/contracts`：前后端共享的数据约定
 - `infra/local`：本地 PostgreSQL
-- `infra/aliyun`：后续阿里云部署文件
+- `infra/aliyun`：阿里云 ECS 容器部署配置
 - `docs`：环境和架构记录
 
 ## 本机基线
@@ -28,6 +29,15 @@ node --version
 ```
 
 ## 启动本地开发
+
+Web 本地运行：
+
+1. 启动数据库：`docker compose -f infra/local/compose.yaml up -d`。
+2. 复制 `.env.example` 为 `services/api/.env`，运行 `cd services/api && npm ci && npm run db:generate && npx prisma migrate deploy && npm run start:dev`。
+3. 另开终端运行 `cd apps/web && npm ci && npm run dev`，打开 `http://localhost:5173`。Vite 将 `/api` 转发到本地 API。开发模式请求验证码时，页面会显示本地测试码；生产模式只通过阿里云短信发送。
+4. 两个不同的浏览器会话可分别注册家庭账号，发布图书并完成借还流程。正式部署见 [阿里云部署说明](infra/aliyun/README.md)。
+
+以下步骤仅供历史 Android 工程调试：
 
 1. 在仓库根目录复制环境变量：`cp .env.example services/api/.env`。
 2. 启动数据库：`docker compose -f infra/local/compose.yaml up -d`。

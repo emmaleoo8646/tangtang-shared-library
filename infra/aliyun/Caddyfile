@@ -1,0 +1,17 @@
+{$SITE_DOMAIN} {
+  encode zstd gzip
+  header {
+    X-Content-Type-Options nosniff
+    Referrer-Policy strict-origin-when-cross-origin
+    X-Frame-Options DENY
+  }
+  handle /api/* {
+    reverse_proxy api:3000
+  }
+  handle /health {
+    reverse_proxy api:3000
+  }
+  root * /srv
+  try_files {path} /index.html
+  file_server
+}

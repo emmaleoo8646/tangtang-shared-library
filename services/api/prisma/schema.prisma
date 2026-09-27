@@ -65,6 +65,7 @@ model Family {
   books           Book[]
   borrowedLoans   Loan[]         @relation("BorrowerFamily")
   ownedLoans      Loan[]         @relation("OwnerFamily")
+  sessions        Session[]
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 }
@@ -119,10 +120,37 @@ model Loan {
   lentAt                   DateTime?
   dueAt                    DateTime?
   returnedAt               DateTime?
+  borrowerLentConfirmedAt  DateTime?
+  ownerLentConfirmedAt     DateTime?
+  borrowerReturnConfirmedAt DateTime?
+  ownerReturnConfirmedAt   DateTime?
+  renewalRequestedAt       DateTime?
+  renewedAt                DateTime?
   createdAt                DateTime   @default(now())
   updatedAt                DateTime   @updatedAt
 
   @@index([bookId, status])
   @@index([ownerFamilyId, status])
   @@index([borrowerFamilyId, status])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  familyId  String
+  family    Family   @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([familyId])
+}
+
+model LoginCode {
+  phoneHash String   @id
+  codeHash  String
+  expiresAt DateTime
+  attempts  Int      @default(0)
+  sentAt    DateTime @default(now())
+  sendCount Int      @default(1)
+  windowStart DateTime @default(now())
 }

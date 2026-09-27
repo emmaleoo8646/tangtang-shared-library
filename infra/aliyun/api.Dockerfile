@@ -1,0 +1,13 @@
+FROM node:24-bookworm-slim
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY services/api/package.json services/api/package-lock.json ./
+RUN npm ci
+COPY services/api/prisma ./prisma
+RUN npx prisma generate
+COPY services/api/tsconfig*.json services/api/nest-cli.json ./
+COPY services/api/src ./src
+RUN npm run build
+ENV NODE_ENV=production
+EXPOSE 3000
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main"]
