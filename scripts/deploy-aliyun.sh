@@ -52,9 +52,10 @@ fi
 ssh "$deploy_target" "docker compose -p tangtang-library --env-file '$shared_env' -f '$compose_file' up -d --build"
 
 for attempt in {1..30}; do
-  if ssh "$deploy_target" "docker compose -p tangtang-library --env-file '$shared_env' -f '$compose_file' exec -T api node -e \"fetch('http://127.0.0.1:3000/health').then(r=>r.json()).then(v=>{if(v.service!=='tangtang-api')process.exit(1)}).catch(()=>process.exit(1))\"" 2>/dev/null; then
+  if ssh "$deploy_target" "docker compose -p tangtang-library --env-file '$shared_env' -f '$compose_file' exec -T web wget -qO- http://127.0.0.1/health" 2>/dev/null | grep -Fq '"service":"tangtang-api"' \
+    && ssh "$deploy_target" "docker compose -p tangtang-library --env-file '$shared_env' -f '$compose_file' exec -T web wget -qO- http://127.0.0.1/api/books" 2>/dev/null | grep -Eq '^\['; then
     ssh "$deploy_target" "ln -sfn '$release_dir' '$deploy_root/current'"
-    echo "容器已就绪。请完成共享入口的 DNS、证书和 HTTPS 验收：https://$site_domain/health"
+    echo "网页和 API 内部路由已就绪。请完成共享入口的 DNS、证书和 HTTPS 验收：https://$site_domain/health"
     exit 0
   fi
   sleep 2
