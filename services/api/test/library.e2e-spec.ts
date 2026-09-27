@@ -22,11 +22,33 @@ integration('two-family borrowing flow', () => {
   afterAll(async () => { await app.close(); });
 
   async function signIn(suffix: number, nickname: string) {
-    const phone = `139${seed.slice(0, 7)}${suffix}`;
-    const sent = await request(server).post('/api/auth/request-code').send({ phone }).expect(201);
-    const verified = await request(server).post('/api/auth/verify').send({ phone, code: sent.body.developmentCode, nickname }).expect(201);
-    return { cookie: verified.headers['set-cookie'][0].split(';')[0] as string, id: verified.body.id as string };
+    const username = `family_${seed}_${suffix}`;
+    const email = `${username}@example.test`;
+    const password = `test-password-${seed}`;
+    const sent = await request(server).post('/api/auth/email-code').send({ email, purpose: 'register' }).expect(201);
+    const verified = await request(server).post('/api/auth/register').send({ username, email, password, code: sent.body.developmentCode, nickname }).expect(201);
+    return { cookie: verified.headers['set-cookie'][0].split(';')[0] as string, id: verified.body.id as string, username, email, password };
   }
+
+  it('verifies registration email and restores access after a password reset', async () => {
+    const username = `recovery_${seed}`;
+    const email = `${username}@example.test`;
+    const sent = await request(server).post('/api/auth/email-code').send({ email, purpose: 'register' }).expect(201);
+    await request(server).post('/api/auth/register').send({ username, email, password: 'first-password-123', code: '000000' }).expect(401);
+    const registered = await request(server).post('/api/auth/register').send({ username, email, password: 'first-password-123', code: sent.body.developmentCode }).expect(201);
+    const firstCookie = registered.headers['set-cookie'][0].split(';')[0] as string;
+    await request(server).get('/api/me').set('Cookie', firstCookie).expect(200).expect(({ body }) => {
+      expect(body).toMatchObject({ username, email });
+    });
+    await request(server).post('/api/auth/login').send({ account: username, password: 'wrong-password-123' }).expect(401);
+    await request(server).post('/api/auth/login').send({ account: email, password: 'first-password-123' }).expect(201);
+    const resetCode = await request(server).post('/api/auth/email-code').send({ email, purpose: 'reset' }).expect(201);
+    await request(server).post('/api/auth/password-reset').send({ email, code: resetCode.body.developmentCode, password: 'second-password-123' }).expect(201);
+    await request(server).get('/api/me').set('Cookie', firstCookie).expect(401);
+    await request(server).post('/api/auth/login').send({ account: username, password: 'first-password-123' }).expect(401);
+    await request(server).post('/api/auth/login').send({ account: username, password: 'second-password-123' }).expect(201);
+    await request(server).post('/api/auth/password-reset').send({ email, code: resetCode.body.developmentCode, password: 'third-password-123' }).expect(401);
+  });
 
   it('keeps one active claim, protects parties, and returns the book after both confirmations', async () => {
     const owner = await signIn(1, '测试书主');

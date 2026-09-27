@@ -32,6 +32,8 @@ export type Loan = {
 };
 export type Family = {
   id: string;
+  username: string | null;
+  email: string;
   displayName: string;
   children: {
     id: string;

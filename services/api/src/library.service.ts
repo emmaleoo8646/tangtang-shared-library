@@ -2,11 +2,9 @@ import {
   BadRequestException, ConflictException, ForbiddenException, Injectable,
   NotFoundException, OnModuleDestroy, OnModuleInit, UnauthorizedException,
 } from '@nestjs/common';
-import { BookCondition, BookStatus, Prisma, PrismaClient } from '@prisma/client';
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
-import Dysmsapi20170525, * as SmsApi from '@alicloud/dysmsapi20170525';
-import * as OpenApiTypes from '@alicloud/openapi-client';
-import Credential from '@alicloud/credentials';
+import { BookCondition, BookStatus, EmailCodePurpose, Prisma, PrismaClient } from '@prisma/client';
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomInt, scrypt, timingSafeEqual } from 'node:crypto';
+import { requireEmailDelivery, sendAccountCode } from './email.js';
 
 const ageMap: Record<string, 'AGE_4_6' | 'AGE_7_9' | 'AGE_10_12'> = {
   '3—6 岁': 'AGE_4_6', '6—9 岁': 'AGE_7_9', '9—12 岁': 'AGE_10_12',
@@ -34,6 +32,41 @@ function digest(value: string) { return createHmac('sha256', secret()).update(va
 function same(a: string, b: string) {
   const left = Buffer.from(a, 'hex'); const right = Buffer.from(b, 'hex');
   return left.length === right.length && timingSafeEqual(left, right);
+}
+function emailAddress(value: unknown) {
+  const email = text(value, '邮箱', 254, true).toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new BadRequestException('邮箱格式不正确');
+  return email;
+}
+function usernameValue(value: unknown) {
+  const username = text(value, '账号', 24, true).toLowerCase();
+  if (!/^[a-z0-9_]{4,24}$/.test(username)) throw new BadRequestException('账号须为 4 到 24 位字母、数字或下划线');
+  return username;
+}
+function passwordValue(value: unknown) {
+  if (typeof value !== 'string' || value.length < 10 || value.length > 128 || [...value].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) {
+    throw new BadRequestException('密码须为 10 到 128 位且不能包含控制字符');
+  }
+  return value;
+}
+function derivePassword(password: string, salt: Buffer) {
+  return new Promise<Buffer>((resolve, reject) => {
+    scrypt(password, salt, 64, { N: 16_384, r: 8, p: 1, maxmem: 32 * 1024 * 1024 }, (error, key) => {
+      if (error) reject(error);
+      else resolve(key);
+    });
+  });
+}
+async function hashPassword(password: string) {
+  const salt = randomBytes(16);
+  return `scrypt$${salt.toString('hex')}$${(await derivePassword(password, salt)).toString('hex')}`;
+}
+async function matchesPassword(password: string, encoded: string | null) {
+  const parts = encoded?.split('$');
+  const salt = parts?.length === 3 && parts[0] === 'scrypt' && /^[a-f0-9]{32}$/.test(parts[1]) ? Buffer.from(parts[1], 'hex') : Buffer.alloc(16);
+  const expected = parts?.length === 3 && /^[a-f0-9]{128}$/.test(parts[2]) ? Buffer.from(parts[2], 'hex') : Buffer.alloc(64);
+  const actual = await derivePassword(password, salt);
+  return Boolean(encoded && parts?.[0] === 'scrypt' && timingSafeEqual(actual, expected));
 }
 function encrypt(value: string) {
   const iv = randomBytes(12);
@@ -63,7 +96,7 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
   async getFamily(token?: string) {
     if (!token || !/^[a-f0-9]{64}$/.test(token)) return null;
     const session = await this.sessionModelFind(digest(token));
-    return session && session.expiresAt > new Date() ? session.family : null;
+    return session && session.expiresAt > new Date() && session.family.emailVerifiedAt ? session.family : null;
   }
 
   private sessionModelFind(tokenHash: string) {
@@ -76,55 +109,112 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
     return family;
   }
 
-  async requestCode(body: Record<string, unknown>) {
-    const phone = text(body.phone, '手机号', 11, true);
-    if (!/^1[3-9]\d{9}$/.test(phone)) throw new BadRequestException('请输入中国内地手机号');
-    const allowlist = process.env.TEST_PHONE_ALLOWLIST?.split(',').map(value => value.trim()).filter(Boolean);
-    if (allowlist?.length && !allowlist.includes(phone)) throw new ForbiddenException('测试站暂未开放注册');
-    const phoneHash = digest(`phone:${phone}`);
-    const existing = await this.loginCode.findUnique({ where: { phoneHash } });
+  async requestEmailCode(body: Record<string, unknown>) {
+    const email = emailAddress(body.email);
+    const purpose = body.purpose === 'register' ? EmailCodePurpose.REGISTER : body.purpose === 'reset' ? EmailCodePurpose.RESET : null;
+    if (!purpose) throw new BadRequestException('验证码用途不正确');
+    requireEmailDelivery();
+    const emailHash = digest(`email:${email}`);
+    if (purpose === EmailCodePurpose.REGISTER) {
+      const allowlist = process.env.TEST_EMAIL_ALLOWLIST?.split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
+      if (process.env.NODE_ENV === 'production' && (!allowlist?.length || !allowlist.includes(email))) throw new ForbiddenException('测试站暂未开放注册');
+      if (await this.family.findUnique({ where: { emailLookupHash: emailHash } })) throw new ConflictException('邮箱已注册');
+    }
+    const existing = await this.emailCode.findUnique({ where: { emailHash_purpose: { emailHash, purpose } } });
     const now = new Date();
     const recent = existing && now.getTime() - existing.windowStart.getTime() < 3600_000;
     if (existing && now.getTime() - existing.sentAt.getTime() < 60_000) throw new ConflictException('请一分钟后再试');
     if (recent && existing.sendCount >= 5) throw new ConflictException('发送次数过多，请稍后再试');
-    if (process.env.NODE_ENV === 'production' && await this.loginCode.count({ where: { sentAt: { gt: new Date(now.getTime() - 3600_000) } } }) >= 20) throw new ConflictException('短信服务繁忙，请稍后再试');
+    if (process.env.NODE_ENV === 'production' && await this.emailCode.count({ where: { sentAt: { gt: new Date(now.getTime() - 3600_000) } } }) >= 100) throw new ConflictException('邮件服务繁忙，请稍后再试');
     const code = String(randomInt(100000, 1000000));
-    const codeHash = digest(`code:${phoneHash}:${code}`);
-    if (process.env.NODE_ENV === 'production') {
-      // Production must never disclose codes through the API or logs.
-      await this.sendSms(phone, code);
+    const codeHash = digest(`email-code:${purpose}:${emailHash}:${code}`);
+    await this.emailCode.upsert({
+      where: { emailHash_purpose: { emailHash, purpose } },
+      create: { emailHash, purpose, codeHash, expiresAt: new Date(now.getTime() + 10 * 60_000) },
+      update: { codeHash, expiresAt: new Date(now.getTime() + 10 * 60_000), attempts: 0, sentAt: now, sendCount: recent ? { increment: 1 } : 1, windowStart: recent ? undefined : now },
+    });
+    const recipientExists = purpose === EmailCodePurpose.REGISTER || Boolean(await this.family.findUnique({ where: { emailLookupHash: emailHash } }));
+    if (recipientExists) {
+      try { await sendAccountCode(email, code, purpose); }
+      catch {
+        await this.emailCode.deleteMany({ where: { emailHash, purpose, codeHash } });
+        throw new ConflictException('邮件发送失败，请稍后重试');
+      }
     }
-    await this.loginCode.upsert({ where: { phoneHash }, create: { phoneHash, codeHash, expiresAt: new Date(Date.now() + 5 * 60_000) }, update: { codeHash, expiresAt: new Date(Date.now() + 5 * 60_000), attempts: 0, sentAt: now, sendCount: recent ? { increment: 1 } : 1, windowStart: recent ? undefined : now } });
     return process.env.NODE_ENV === 'production' ? { sent: true } : { sent: true, developmentCode: code };
   }
 
-  private async sendSms(phone: string, code: string) {
-    const signName = process.env.ALIYUN_SMS_SIGN_NAME;
-    const templateCode = process.env.ALIYUN_SMS_TEMPLATE_CODE;
-    if (!signName || !templateCode) throw new Error('ALIYUN_SMS_SIGN_NAME and ALIYUN_SMS_TEMPLATE_CODE are required');
-    const client = new Dysmsapi20170525.default(new OpenApiTypes.Config({ credential: new Credential.default(), endpoint: 'dysmsapi.aliyuncs.com' }));
-    const response = await client.sendSms(new SmsApi.SendSmsRequest({ phoneNumbers: phone, signName, templateCode, templateParam: JSON.stringify({ code }) }));
-    if (response.body?.code !== 'OK') throw new Error('短信发送失败');
+  private async checkEmailCode(emailHash: string, purpose: EmailCodePurpose, code: unknown) {
+    const value = text(code, '验证码', 6, true);
+    if (!/^\d{6}$/.test(value)) throw new BadRequestException('验证码格式不正确');
+    const record = await this.emailCode.findUnique({ where: { emailHash_purpose: { emailHash, purpose } } });
+    if (!record || record.expiresAt <= new Date() || record.attempts >= 5) throw new UnauthorizedException('验证码已失效');
+    const codeHash = digest(`email-code:${purpose}:${emailHash}:${value}`);
+    if (!same(record.codeHash, codeHash)) {
+      await this.emailCode.updateMany({ where: { emailHash, purpose, attempts: { lt: 5 } }, data: { attempts: { increment: 1 } } });
+      throw new UnauthorizedException('验证码不正确');
+    }
+    return codeHash;
   }
 
-  async verifyCode(body: Record<string, unknown>) {
-    const phone = text(body.phone, '手机号', 11, true);
-    const code = text(body.code, '验证码', 6, true);
-    if (!/^1[3-9]\d{9}$/.test(phone) || !/^\d{6}$/.test(code)) throw new BadRequestException('手机号或验证码格式不正确');
-    const phoneHash = digest(`phone:${phone}`);
-    const record = await this.loginCode.findUnique({ where: { phoneHash } });
-    if (!record || record.expiresAt < new Date() || record.attempts >= 5) throw new UnauthorizedException('验证码已失效');
-    await this.loginCode.update({ where: { phoneHash }, data: { attempts: { increment: 1 } } });
-    if (!same(record.codeHash, digest(`code:${phoneHash}:${code}`))) throw new UnauthorizedException('验证码不正确');
-    const nickname = body.nickname === undefined ? '我的书屋' : text(body.nickname, '书屋昵称', 30, true);
+  async register(body: Record<string, unknown>) {
+    const username = usernameValue(body.username);
+    const email = emailAddress(body.email);
+    const password = passwordValue(body.password);
+    const nickname = body.nickname === undefined ? username : text(body.nickname, '书屋昵称', 30, true);
+    const emailHash = digest(`email:${email}`);
+    const codeHash = await this.checkEmailCode(emailHash, EmailCodePurpose.REGISTER, body.code);
+    if (await this.family.findFirst({ where: { OR: [{ username }, { emailLookupHash: emailHash }] } })) throw new ConflictException('账号或邮箱已注册');
+    const passwordHash = await hashPassword(password);
     const token = randomBytes(32).toString('hex');
-    const result = await this.$transaction(async tx => {
-      await tx.loginCode.delete({ where: { phoneHash } });
-      const family = await tx.family.upsert({ where: { phoneLookupHash: phoneHash }, create: { phoneLookupHash: phoneHash, displayName: nickname }, update: {} });
-      await tx.session.create({ data: { familyId: family.id, tokenHash: digest(token), expiresAt: new Date(Date.now() + 30 * 24 * 3600_000) } });
-      return family;
+    const family = await this.$transaction(async tx => {
+      const consumed = await tx.emailCode.deleteMany({ where: { emailHash, purpose: EmailCodePurpose.REGISTER, codeHash, expiresAt: { gt: new Date() }, attempts: { lt: 5 } } });
+      if (consumed.count !== 1) throw new UnauthorizedException('验证码已失效');
+      const created = await tx.family.create({ data: { username, emailLookupHash: emailHash, emailCiphertext: encrypt(email), emailVerifiedAt: new Date(), passwordHash, displayName: nickname } });
+      await tx.session.create({ data: { familyId: created.id, tokenHash: digest(token), expiresAt: new Date(Date.now() + 30 * 24 * 3600_000) } });
+      return created;
     });
-    return { token, family: { id: result.id, displayName: result.displayName } };
+    return { token, family: { id: family.id, displayName: family.displayName } };
+  }
+
+  async login(body: Record<string, unknown>) {
+    const account = text(body.account, '账号', 254, true).toLowerCase();
+    const password = passwordValue(body.password);
+    const key = digest(`login:${account}`);
+    const throttle = await this.authThrottle.findUnique({ where: { identifierHash: key } });
+    if (throttle?.blockedUntil && throttle.blockedUntil > new Date()) throw new UnauthorizedException('账号或密码不正确，请稍后重试');
+    const family = account.includes('@')
+      ? await this.family.findUnique({ where: { emailLookupHash: digest(`email:${account}`) } })
+      : await this.family.findUnique({ where: { username: account } });
+    const valid = await matchesPassword(password, family?.passwordHash ?? null);
+    if (!valid || !family || family.status !== 'ACTIVE' || !family.emailVerifiedAt) {
+      const now = new Date();
+      const recent = throttle && now.getTime() - throttle.windowStart.getTime() < 15 * 60_000;
+      const attempts = recent ? throttle.attempts + 1 : 1;
+      await this.authThrottle.upsert({ where: { identifierHash: key }, create: { identifierHash: key, attempts, windowStart: now, blockedUntil: attempts >= 10 ? new Date(now.getTime() + 15 * 60_000) : null }, update: { attempts, windowStart: recent ? undefined : now, blockedUntil: attempts >= 10 ? new Date(now.getTime() + 15 * 60_000) : null } });
+      throw new UnauthorizedException('账号或密码不正确');
+    }
+    await this.authThrottle.deleteMany({ where: { identifierHash: key } });
+    const token = randomBytes(32).toString('hex');
+    await this.session.create({ data: { familyId: family.id, tokenHash: digest(token), expiresAt: new Date(Date.now() + 30 * 24 * 3600_000) } });
+    return { token, family: { id: family.id, displayName: family.displayName } };
+  }
+
+  async resetPassword(body: Record<string, unknown>) {
+    const email = emailAddress(body.email);
+    const password = passwordValue(body.password);
+    const emailHash = digest(`email:${email}`);
+    const codeHash = await this.checkEmailCode(emailHash, EmailCodePurpose.RESET, body.code);
+    const family = await this.family.findUnique({ where: { emailLookupHash: emailHash } });
+    if (!family || family.status !== 'ACTIVE') throw new UnauthorizedException('验证码已失效');
+    const passwordHash = await hashPassword(password);
+    await this.$transaction(async tx => {
+      const consumed = await tx.emailCode.deleteMany({ where: { emailHash, purpose: EmailCodePurpose.RESET, codeHash, expiresAt: { gt: new Date() }, attempts: { lt: 5 } } });
+      if (consumed.count !== 1) throw new UnauthorizedException('验证码已失效');
+      await tx.family.update({ where: { id: family.id }, data: { passwordHash } });
+      await tx.session.deleteMany({ where: { familyId: family.id } });
+    });
+    return { ok: true };
   }
 
   async logout(token?: string) {
@@ -133,7 +223,7 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
 
   async me(familyId: string) {
     const family = await this.family.findUniqueOrThrow({ where: { id: familyId }, include: { children: true } });
-    return { id: family.id, displayName: family.displayName, children: family.children.map(child => ({ id: child.id, nickname: child.nickname, age: ageLabel[child.ageBand] ?? '其他', readingPreferences: child.readingPreferences })) };
+    return { id: family.id, username: family.username, email: decrypt(family.emailCiphertext), displayName: family.displayName, children: family.children.map(child => ({ id: child.id, nickname: child.nickname, age: ageLabel[child.ageBand] ?? '其他', readingPreferences: child.readingPreferences })) };
   }
 
   async updateMe(familyId: string, body: Record<string, unknown>) {
@@ -164,7 +254,7 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
       await tx.book.updateMany({ where: { ownerFamilyId: familyId }, data: { status: 'OFF_SHELF' } });
       await tx.childProfile.deleteMany({ where: { familyId } });
       await tx.session.deleteMany({ where: { familyId } });
-      await tx.family.update({ where: { id: familyId }, data: { status: 'CLOSED', phoneLookupHash: null, phoneCiphertext: null, displayName: '已注销书屋' } });
+      await tx.family.update({ where: { id: familyId }, data: { status: 'CLOSED', phoneLookupHash: null, phoneCiphertext: null, username: null, emailLookupHash: null, emailCiphertext: null, emailVerifiedAt: null, passwordHash: null, displayName: '已注销书屋' } });
     });
     return { ok: true };
   }

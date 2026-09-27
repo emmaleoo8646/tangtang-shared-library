@@ -59,6 +59,11 @@ model Family {
   id              String         @id @default(cuid())
   phoneLookupHash String?        @unique
   phoneCiphertext String?
+  username        String?        @unique
+  emailLookupHash String?        @unique
+  emailCiphertext String?
+  emailVerifiedAt DateTime?
+  passwordHash    String?
   displayName     String
   status          FamilyStatus   @default(ACTIVE)
   children        ChildProfile[]
@@ -153,4 +158,30 @@ model LoginCode {
   sentAt    DateTime @default(now())
   sendCount Int      @default(1)
   windowStart DateTime @default(now())
+}
+
+enum EmailCodePurpose {
+  REGISTER
+  RESET
+}
+
+model EmailCode {
+  emailHash   String
+  purpose     EmailCodePurpose
+  codeHash    String
+  expiresAt   DateTime
+  attempts    Int              @default(0)
+  sentAt      DateTime         @default(now())
+  sendCount   Int              @default(1)
+  windowStart DateTime         @default(now())
+
+  @@id([emailHash, purpose])
+  @@index([sentAt])
+}
+
+model AuthThrottle {
+  identifierHash String   @id
+  attempts       Int      @default(0)
+  windowStart    DateTime @default(now())
+  blockedUntil   DateTime?
 }

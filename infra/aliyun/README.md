@@ -5,8 +5,8 @@
 ## 首次准备
 
 1. 在阿里云 DNS 为 `library` 新增 A 记录，指向这台 ECS 的公网 IP。确认 `douwuyou.cn` 的备案与当前站点信息适用。
-2. 在服务器 `/srv/tangtang-library/shared/.env` 填写 `infra/aliyun/.env.example` 中的变量。文件权限设为 `600`。`POSTGRES_PASSWORD` 和 `AUTH_SECRET` 各用独立随机值；`DATABASE_URL` 中的密码须与前者一致。不要把真实 `.env` 传到 Git。受控测试期必须设置 `TEST_PHONE_ALLOWLIST` 为获准手机号，使用英文逗号分隔。
-3. 阿里云短信尚未开通时，短信相关变量可以留空，但线上无法登录。待账号持有人开通短信、签名与模板获批后，在服务器填写仅有发短信权限的 RAM 凭据，再重建 API 容器。模板变量名必须为 `code`。
+2. 在服务器 `/srv/tangtang-library/shared/.env` 填写 `infra/aliyun/.env.example` 中的变量。文件权限设为 `600`。`POSTGRES_PASSWORD` 和 `AUTH_SECRET` 各用独立随机值；`DATABASE_URL` 中的密码须与前者一致。不要把真实 `.env` 传到 Git。受控测试期必须设置 `TEST_EMAIL_ALLOWLIST` 为获准邮箱，使用英文逗号分隔。
+3. 注册验证和密码找回通过 SMTP 发送邮件。账号持有人需准备 SMTP 主机、465 或 587 端口、发件人地址和授权码，在服务器配置 `SMTP_*` 后重建 API 容器。发件授权码只保存在服务器，不传入 Git 或聊天。未配置邮件服务时，生产环境无法注册或找回密码。
 
 ## 发布应用
 
@@ -37,7 +37,7 @@ curl --fail https://library.douwuyou.cn/health
 
 ## 验收和备份
 
-短信服务配置完成后，用两个获准手机号检查：登录、发布、申请借阅、书主批准、双方确认借出、申请续借、双方确认归还，以及刷新后数据保留。只有这些步骤通过，才视为受控测试版可用。
+邮件服务配置完成后，用两个获准邮箱检查：注册验证码、邮箱验证、账号和邮箱登录、密码找回、发布、申请借阅、书主批准、双方确认借出、申请续借、双方确认归还，以及刷新后数据保留。只有这些步骤通过，才视为受控测试版可用。
 
 更新前脚本将数据库备份到服务器 `/srv/tangtang-library/shared/backups/`。应将备份另存到独立位置并每月做隔离恢复演练。应用可切回 `releases` 中的旧版，数据库结构变化需要用对应备份恢复，不能直接反向执行迁移。
 

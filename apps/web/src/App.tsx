@@ -58,7 +58,11 @@ function App() {
   );
   const [loginOpen, setLoginOpen] = useState(false);
   const [requestedPage, setRequestedPage] = useState<Page | null>(null);
-  const [phone, setPhone] = useState("");
+  const [authMode, setAuthMode] = useState<"login" | "register" | "reset">("login");
+  const [account, setAccount] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [code, setCode] = useState("");
   const [nickname, setNickname] = useState("");
   const [codeSent, setCodeSent] = useState(false);
@@ -81,6 +85,10 @@ function App() {
     (loan) => loan.bookId === selectedId && active.has(loan.stage),
   );
   const activeLoans = loans.filter((loan) => active.has(loan.stage));
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  const authReady = authMode === "login"
+    ? Boolean(account.trim() && password)
+    : emailValid && code.length === 6 && password.length >= 10 && password === confirmPassword && (authMode === "reset" || /^[a-zA-Z0-9_]{4,24}$/.test(account));
   const results = useMemo(
     () =>
       books.filter((book) => {
@@ -125,6 +133,7 @@ function App() {
   function go(target: Page) {
     if (target !== "discover" && target !== "detail" && !family) {
       setRequestedPage(target);
+      switchAuthMode("login");
       setLoginOpen(true);
       return;
     }
@@ -150,21 +159,41 @@ function App() {
       setBusy(false);
     }
   }
+  function switchAuthMode(mode: "login" | "register" | "reset") {
+    setAuthMode(mode);
+    setCode("");
+    setCodeSent(false);
+    setDevelopmentCode("");
+    setPassword("");
+    setConfirmPassword("");
+  }
   async function sendCode() {
     await run(async () => {
       const result = await api<{ developmentCode?: string }>(
-        "/auth/request-code",
+        "/auth/email-code",
         "POST",
-        { phone },
+        { email, purpose: authMode === "register" ? "register" : "reset" },
       );
       setCodeSent(true);
       setDevelopmentCode(result.developmentCode ?? "");
-    }, "验证码已发送");
+    }, "验证邮件已发送");
   }
-  async function login() {
+  async function submitAuth() {
+    if (authMode !== "login" && password !== confirmPassword) {
+      flash("两次输入的密码不一致");
+      return;
+    }
     await run(async () => {
-      await api("/auth/verify", "POST", { phone, code, nickname });
+      if (authMode === "reset") {
+        await api("/auth/password-reset", "POST", { email, code, password });
+        switchAuthMode("login");
+        return;
+      }
+      if (authMode === "register") await api("/auth/register", "POST", { username: account, email, password, code, nickname: nickname || account });
+      else await api("/auth/login", "POST", { account, password });
       setLoginOpen(false);
+      setPassword("");
+      setConfirmPassword("");
       setCode("");
       setCodeSent(false);
       setDevelopmentCode("");
@@ -172,11 +201,12 @@ function App() {
         setPage(requestedPage);
         setRequestedPage(null);
       }
-    }, "已登录");
+    }, authMode === "reset" ? "密码已重置，请登录" : authMode === "register" ? "注册成功" : "已登录");
   }
   async function logout() {
     await run(async () => {
       await api("/auth/logout", "POST");
+      setNickname("");
       setPage("discover");
     }, "已退出登录");
   }
@@ -207,6 +237,7 @@ function App() {
     if (!selectedBook) return;
     if (!family) {
       setRequestedPage(null);
+      switchAuthMode("login");
       setLoginOpen(true);
       return;
     }
@@ -466,7 +497,10 @@ function App() {
           </nav>
           <button
             className="role-button"
-            onClick={() => (family ? go("profile") : setLoginOpen(true))}
+            onClick={() => {
+              if (family) go("profile");
+              else { switchAuthMode("login"); setLoginOpen(true); }
+            }}
           >
             <span className="avatar">
               {family ? family.displayName[0] : "访"}
@@ -594,7 +628,7 @@ function App() {
             )}
             <div className="privacy-note">
               <span>
-                公开页面只显示书屋昵称；孩子资料、手机号与交接地点不会公开。
+                公开页面只显示书屋昵称；孩子资料、邮箱与交接地点不会公开。
               </span>
             </div>
           </>
@@ -968,6 +1002,8 @@ function App() {
               <p>孩子信息只供家庭家长查看和管理。</p>
             </div>
             <div className="publish-form profile-panel">
+              <p>登录账号：{family.username || "待设置"}</p>
+              <p>已验证邮箱：{family.email || "待设置"}</p>
               <div className="field-grid">
                 <label>
                   书屋昵称
@@ -1092,32 +1128,57 @@ function App() {
             >
               ×
             </button>
-            <p className="eyebrow">家长登录</p>
-            <h2 id="login-title">欢迎来到共享书屋</h2>
-            <p>用手机号验证码登录；首次登录会创建家庭书屋。</p>
+            <p className="eyebrow">{authMode === "login" ? "家长登录" : authMode === "register" ? "注册家庭书屋" : "找回密码"}</p>
+            <h2 id="login-title">{authMode === "login" ? "欢迎回来" : authMode === "register" ? "创建共享书屋账号" : "重置登录密码"}</h2>
+            <p>{authMode === "login" ? "使用账号或已验证邮箱登录。" : authMode === "register" ? "填写账号、邮箱和密码，完成邮箱验证后即可使用。" : "向注册邮箱发送验证码，验证后设置新密码。"}</p>
             <div className="login-fields">
-              <label>
-                手机号
-                <input
-                  inputMode="tel"
-                  autoComplete="tel"
-                  value={phone}
-                  maxLength={11}
-                  onChange={(event) => setPhone(event.target.value)}
-                  placeholder="请输入手机号"
-                />
-              </label>
-              <button
-                className="secondary-button"
-                disabled={busy || !/^1[3-9]\d{9}$/.test(phone)}
-                onClick={sendCode}
-              >
-                {codeSent ? "重新获取验证码" : "获取验证码"}
-              </button>
-              {codeSent && (
+              {authMode !== "reset" && (
+                <label>
+                  {authMode === "login" ? "账号或邮箱" : "账号（4–24 位字母、数字或下划线）"}
+                  <input
+                    autoComplete="username"
+                    value={account}
+                    maxLength={authMode === "login" ? 254 : 24}
+                    onChange={(event) => setAccount(event.target.value)}
+                    placeholder={authMode === "login" ? "请输入账号或邮箱" : "例如 tangtang_home"}
+                  />
+                </label>
+              )}
+              {authMode !== "login" && (
+                <label>
+                  注册邮箱
+                  <input
+                    type="email"
+                    autoComplete="email"
+                    value={email}
+                    maxLength={254}
+                    onChange={(event) => setEmail(event.target.value)}
+                    placeholder="用于验证和找回密码"
+                  />
+                </label>
+              )}
+              {authMode === "register" && (
+                <label>
+                  书屋昵称
+                  <input
+                    value={nickname}
+                    maxLength={30}
+                    onChange={(event) => setNickname(event.target.value)}
+                    placeholder="例如：糖糖书屋"
+                  />
+                </label>
+              )}
+              {authMode !== "login" && (
                 <>
+                  <button
+                    className="secondary-button"
+                    disabled={busy || !emailValid}
+                    onClick={sendCode}
+                  >
+                    {codeSent ? "重新发送验证邮件" : "发送邮箱验证码"}
+                  </button>
                   <label>
-                    验证码
+                    邮箱验证码
                     <input
                       inputMode="numeric"
                       autoComplete="one-time-code"
@@ -1131,27 +1192,42 @@ function App() {
                       本地开发验证码：{developmentCode}
                     </p>
                   )}
-                  <label>
-                    书屋昵称（首次登录填写）
-                    <input
-                      value={nickname}
-                      maxLength={30}
-                      onChange={(event) => setNickname(event.target.value)}
-                      placeholder="例如：糖糖书屋"
-                    />
-                  </label>
-                  <button
-                    className="primary-button"
-                    disabled={busy || code.length !== 6}
-                    onClick={login}
-                  >
-                    登录 / 创建书屋
-                  </button>
                 </>
               )}
+              <label>
+                {authMode === "reset" ? "新密码" : "密码"}
+                <input
+                  type="password"
+                  autoComplete={authMode === "login" ? "current-password" : "new-password"}
+                  value={password}
+                  maxLength={128}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder={authMode === "login" ? "请输入密码" : "至少 10 位"}
+                />
+              </label>
+              {authMode !== "login" && (
+                <label>
+                  确认密码
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    value={confirmPassword}
+                    maxLength={128}
+                    onChange={(event) => setConfirmPassword(event.target.value)}
+                  />
+                </label>
+              )}
+              <button className="primary-button" disabled={busy || !authReady} onClick={submitAuth}>
+                {authMode === "login" ? "登录" : authMode === "register" ? "验证邮箱并注册" : "重置密码"}
+              </button>
+              <div className="auth-switches">
+                {authMode !== "login" && <button type="button" onClick={() => switchAuthMode("login")}>返回登录</button>}
+                {authMode !== "register" && <button type="button" onClick={() => switchAuthMode("register")}>创建账号</button>}
+                {authMode !== "reset" && <button type="button" onClick={() => switchAuthMode("reset")}>忘记密码</button>}
+              </div>
             </div>
             <p className="dialog-foot">
-              手机号仅用于登录验证，不会公开给其他家庭。
+              邮箱仅用于账号验证与密码找回，不会公开给其他家庭。
             </p>
           </div>
         </div>

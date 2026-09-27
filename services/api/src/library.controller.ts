@@ -14,15 +14,25 @@ export class LibraryController {
     return this.library.requireFamily(await this.library.getFamily(cookie(req)));
   }
 
-  @Post('auth/request-code')
-  requestCode(@Body() body: Record<string, unknown>) { return this.library.requestCode(body); }
+  @Post('auth/email-code')
+  requestEmailCode(@Body() body: Record<string, unknown>) { return this.library.requestEmailCode(body); }
 
-  @Post('auth/verify')
-  async verify(@Body() body: Record<string, unknown>, @Res({ passthrough: true }) res: Response) {
-    const result = await this.library.verifyCode(body);
+  @Post('auth/register')
+  async register(@Body() body: Record<string, unknown>, @Res({ passthrough: true }) res: Response) {
+    const result = await this.library.register(body);
     res.cookie('tt_session', result.token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', path: '/', maxAge: 30 * 24 * 3600_000 });
     return result.family;
   }
+
+  @Post('auth/login')
+  async login(@Body() body: Record<string, unknown>, @Res({ passthrough: true }) res: Response) {
+    const result = await this.library.login(body);
+    res.cookie('tt_session', result.token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', path: '/', maxAge: 30 * 24 * 3600_000 });
+    return result.family;
+  }
+
+  @Post('auth/password-reset')
+  resetPassword(@Body() body: Record<string, unknown>) { return this.library.resetPassword(body); }
 
   @Post('auth/logout')
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {

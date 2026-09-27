@@ -34,7 +34,7 @@ Web 本地运行：
 
 1. 启动数据库：`docker compose -f infra/local/compose.yaml up -d`。
 2. 复制 `.env.example` 为 `services/api/.env`，运行 `cd services/api && npm ci && npm run db:generate && npx prisma migrate deploy && npm run start:dev`。
-3. 另开终端运行 `cd apps/web && npm ci && npm run dev`，打开 `http://localhost:5173`。Vite 将 `/api` 转发到本地 API。开发模式请求验证码时，页面会显示本地测试码；生产模式只通过阿里云短信发送。
+3. 另开终端运行 `cd apps/web && npm ci && npm run dev`，打开 `http://localhost:5173`。Vite 将 `/api` 转发到本地 API。开发模式请求邮箱验证码时，页面会显示本地测试码；生产模式只通过配置好的 SMTP 发信服务发送。
 4. 两个不同的浏览器会话可分别注册家庭账号，发布图书并完成借还流程。正式部署见 [阿里云部署说明](infra/aliyun/README.md)。
 
 以下步骤仅供历史 Android 工程调试：
@@ -56,6 +56,6 @@ Web 本地运行：
 
 - 孩子只使用昵称、年龄段与阅读偏好，不公开真实姓名、联系方式或家庭住址。
 - 交接信息只允许订单双方家长查看，数据库中按敏感信息设计。
-- AI 密钥、短信密钥、数据库密码和 OSS 密钥只放后端环境变量。
+- AI 密钥、SMTP 授权码、数据库密码和 OSS 密钥只放后端环境变量。
 - AI 生成内容必须由家长确认；无法确定的信息显示“待确认”。
 - 发布签名文件与真实 `.env` 永远不进入 Git。
