@@ -29,6 +29,9 @@ export type Loan = {
   renewalRequested: boolean;
   renewed: boolean;
   requestedAt: string;
+  approvedAt: string | null;
+  lentAt: string | null;
+  returnedAt: string | null;
 };
 export type Family = {
   id: string;

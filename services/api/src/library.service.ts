@@ -291,7 +291,7 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
   async loans(familyId: string) {
     await this.expireRequests();
     const rows = await this.loan.findMany({ where: { OR: [{ ownerFamilyId: familyId }, { borrowerFamilyId: familyId }] }, include: { book: true, ownerFamily: { select: { displayName: true } }, borrowerFamily: { select: { displayName: true } } }, orderBy: { createdAt: 'desc' }, take: 200 });
-    return rows.map(row => ({ id: row.id, bookId: row.bookId, bookTitle: row.book.title, owner: row.ownerFamily.displayName, borrower: row.borrowerFamily.displayName, isOwner: row.ownerFamilyId === familyId, stage: row.status, place: decrypt(row.handoffDetailsCiphertext), borrowerLoanConfirmed: !!row.borrowerLentConfirmedAt, ownerLoanConfirmed: !!row.ownerLentConfirmedAt, borrowerReturnConfirmed: !!row.borrowerReturnConfirmedAt, ownerReturnConfirmed: !!row.ownerReturnConfirmedAt, renewalRequested: !!row.renewalRequestedAt, renewed: !!row.renewedAt, dueAt: row.dueAt?.toISOString() ?? null, requestedAt: row.requestedAt.toISOString() }));
+    return rows.map(row => ({ id: row.id, bookId: row.bookId, bookTitle: row.book.title, owner: row.ownerFamily.displayName, borrower: row.borrowerFamily.displayName, isOwner: row.ownerFamilyId === familyId, stage: row.status, place: decrypt(row.handoffDetailsCiphertext), borrowerLoanConfirmed: !!row.borrowerLentConfirmedAt, ownerLoanConfirmed: !!row.ownerLentConfirmedAt, borrowerReturnConfirmed: !!row.borrowerReturnConfirmedAt, ownerReturnConfirmed: !!row.ownerReturnConfirmedAt, renewalRequested: !!row.renewalRequestedAt, renewed: !!row.renewedAt, dueAt: row.dueAt?.toISOString() ?? null, requestedAt: row.requestedAt.toISOString(), approvedAt: row.approvedAt?.toISOString() ?? null, lentAt: row.lentAt?.toISOString() ?? null, returnedAt: row.returnedAt?.toISOString() ?? null }));
   }
 
   async apply(familyId: string, bookId: string) {
@@ -327,21 +327,24 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
       const expected = loan.status;
       let data: Prisma.LoanUpdateManyMutationInput = {};
       let bookStatus: BookStatus | undefined;
-      if (action === 'approve' && owner && expected === 'REQUESTED') data = { status: 'APPROVED', approvedAt: now };
+      if (action === 'approve' && owner && expected === 'REQUESTED') {
+        const place = text(body.place, '公共交接地点', 120, true);
+        data = { status: 'HANDOFF_AGREED', approvedAt: now, handoffDetailsCiphertext: encrypt(place) };
+      }
       else if (action === 'decline' && owner && expected === 'REQUESTED') { data = { status: 'REJECTED' }; bookStatus = 'AVAILABLE'; }
       else if (action === 'cancel' && borrower && expected === 'REQUESTED') { data = { status: 'CANCELLED' }; bookStatus = 'AVAILABLE'; }
-      else if (action === 'set-place' && (expected === 'APPROVED' || expected === 'HANDOFF_AGREED') && !loan.ownerLentConfirmedAt && !loan.borrowerLentConfirmedAt) {
+      else if (action === 'set-place' && owner && (expected === 'APPROVED' || expected === 'HANDOFF_AGREED') && !loan.ownerLentConfirmedAt && !loan.borrowerLentConfirmedAt) {
         const place = text(body.place, '公共交接地点', 120, true);
         data = { handoffDetailsCiphertext: encrypt(place), status: 'HANDOFF_AGREED' };
       } else if (action === 'confirm-lend' && expected === 'HANDOFF_AGREED' && loan.handoffDetailsCiphertext) {
-        if (owner && !loan.ownerLentConfirmedAt) data = { ownerLentConfirmedAt: now };
         if (borrower && !loan.borrowerLentConfirmedAt) data = { borrowerLentConfirmedAt: now };
-        if ((owner && loan.borrowerLentConfirmedAt) || (borrower && loan.ownerLentConfirmedAt)) { data = { ...data, status: 'LENT', lentAt: now, dueAt: new Date(now.getTime() + 14 * 24 * 3600_000) }; bookStatus = 'ON_LOAN'; }
-      } else if (action === 'confirm-return' && (expected === 'LENT' || expected === 'RETURN_REQUESTED')) {
-        if (owner && !loan.ownerReturnConfirmedAt) data = { ownerReturnConfirmedAt: now };
-        if (borrower && !loan.borrowerReturnConfirmedAt) data = { borrowerReturnConfirmedAt: now };
-        if ((owner && loan.borrowerReturnConfirmedAt) || (borrower && loan.ownerReturnConfirmedAt)) { data = { ...data, status: 'RETURNED', returnedAt: now }; bookStatus = 'AVAILABLE'; }
-        else if (Object.keys(data).length) data = { ...data, status: 'RETURN_REQUESTED' };
+        else if (owner && loan.borrowerLentConfirmedAt && !loan.ownerLentConfirmedAt) data = { ownerLentConfirmedAt: now };
+        if (Object.keys(data).length) { data = { ...data, status: 'LENT', lentAt: now, dueAt: new Date(now.getTime() + 14 * 24 * 3600_000) }; bookStatus = 'ON_LOAN'; }
+      } else if (action === 'request-return' && borrower && expected === 'LENT' && !loan.borrowerReturnConfirmedAt) {
+        data = { borrowerReturnConfirmedAt: now, renewalRequestedAt: null, status: 'RETURN_REQUESTED' };
+      } else if (action === 'confirm-return' && owner && (expected === 'LENT' || expected === 'RETURN_REQUESTED')) {
+        data = { ownerReturnConfirmedAt: loan.ownerReturnConfirmedAt ?? now, status: 'RETURNED', returnedAt: now };
+        bookStatus = 'AVAILABLE';
       } else if (action === 'request-renew' && borrower && expected === 'LENT' && !loan.renewalRequestedAt && !loan.renewedAt) data = { renewalRequestedAt: now };
       else if (action === 'approve-renew' && owner && expected === 'LENT' && loan.renewalRequestedAt && !loan.renewedAt) data = { renewedAt: now, dueAt: new Date((loan.dueAt ?? now).getTime() + 14 * 24 * 3600_000) };
       if (!Object.keys(data).length) throw new ConflictException('当前状态不允许此操作，或已处理过');

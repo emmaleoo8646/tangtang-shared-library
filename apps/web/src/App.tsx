@@ -3,11 +3,11 @@ import { api, type Book, type Family, type Loan } from "./api";
 
 type Page = "discover" | "detail" | "publish" | "tasks" | "library" | "profile";
 const statusText: Record<string, string> = {
-  REQUESTED: "等待书主审批",
-  APPROVED: "约定交接",
-  HANDOFF_AGREED: "确认借出",
+  REQUESTED: "等待书主同意",
+  APPROVED: "待确认交接地点",
+  HANDOFF_AGREED: "待取书",
   LENT: "借阅中",
-  RETURN_REQUESTED: "确认归还",
+  RETURN_REQUESTED: "待书主确认归还",
   RETURNED: "已归还",
   CANCELLED: "已取消",
   REJECTED: "已拒绝",
@@ -26,6 +26,28 @@ const nav: { page: Page; label: string; icon: string }[] = [
   { page: "tasks", label: "消息·待办", icon: "◷" },
   { page: "library", label: "我的书屋", icon: "▥" },
 ];
+
+function needsAttention(loan: Loan) {
+  if (loan.stage === "REQUESTED" || loan.stage === "APPROVED") return loan.isOwner;
+  if (loan.stage === "HANDOFF_AGREED") {
+    return loan.isOwner
+      ? loan.borrowerLoanConfirmed && !loan.ownerLoanConfirmed
+      : !loan.borrowerLoanConfirmed;
+  }
+  if (loan.stage === "RETURN_REQUESTED") return loan.isOwner;
+  return loan.stage === "LENT" && loan.isOwner && loan.renewalRequested && !loan.renewed;
+}
+
+function loanStep(stage: string) {
+  if (stage === "REQUESTED") return 0;
+  if (stage === "APPROVED" || stage === "HANDOFF_AGREED") return 1;
+  if (stage === "LENT") return 2;
+  return 3;
+}
+
+function dateLabel(value: string) {
+  return new Date(value).toLocaleDateString("zh-CN");
+}
 
 function BookCover({ book, large = false }: { book: Book; large?: boolean }) {
   return (
@@ -52,7 +74,7 @@ function App() {
   const [category, setCategory] = useState("全部");
   const [age, setAge] = useState("全部");
   const [onlyAvailable, setOnlyAvailable] = useState(false);
-  const [taskTab, setTaskTab] = useState<"todo" | "messages">("todo");
+  const [taskTab, setTaskTab] = useState<"todo" | "progress" | "messages">("todo");
   const [libraryTab, setLibraryTab] = useState<"my" | "borrowed" | "lent">(
     "my",
   );
@@ -85,7 +107,8 @@ function App() {
     (loan) => loan.bookId === selectedId && active.has(loan.stage),
   );
   const activeLoans = loans.filter((loan) => active.has(loan.stage));
-  const pendingCount = activeLoans.length;
+  const todoLoans = activeLoans.filter(needsAttention);
+  const pendingCount = todoLoans.length;
   const pendingBadge = pendingCount > 99 ? "99+" : pendingCount;
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   const authReady = authMode === "login"
@@ -246,7 +269,7 @@ function App() {
     await run(async () => {
       await api(`/books/${selectedBook.id}/apply`, "POST");
       setPage("tasks");
-      setTaskTab("todo");
+      setTaskTab("progress");
     }, "申请已提交，等待书主审批");
   }
   async function act(
@@ -305,18 +328,35 @@ function App() {
   function renderLoanCard(loan: Loan) {
     const book = books.find((item) => item.id === loan.bookId);
     if (!book) return null;
-    const mineLend = loan.isOwner
-      ? loan.ownerLoanConfirmed
-      : loan.borrowerLoanConfirmed;
-    const mineReturn = loan.isOwner
-      ? loan.ownerReturnConfirmed
-      : loan.borrowerReturnConfirmed;
+    const previousPlace = loans.find((item) => item.id !== loan.id && item.isOwner && item.place)?.place ?? "";
+    const place = places[loan.id] ?? (loan.place || previousPlace);
+    const step = loanStep(loan.stage);
+    const remainingDays = loan.dueAt
+      ? Math.ceil((new Date(loan.dueAt).getTime() - Date.now()) / 86_400_000)
+      : null;
+    const statusLabel = loan.isOwner && loan.stage === "REQUESTED"
+      ? "待你同意"
+      : loan.isOwner && loan.stage === "RETURN_REQUESTED"
+        ? "待你确认收回"
+        : statusText[loan.stage];
+    let nextStep = "";
+    if (loan.stage === "REQUESTED") nextStep = loan.isOwner ? "请确认公共交接地点并同意借出" : "等待书主处理申请";
+    else if (loan.stage === "APPROVED") nextStep = loan.isOwner ? "请确认公共交接地点" : "等待书主确认交接地点";
+    else if (loan.stage === "HANDOFF_AGREED") nextStep = loan.isOwner
+      ? loan.borrowerLoanConfirmed ? "请完成这笔旧订单的交接确认" : "等待借书家庭取书并确认"
+      : loan.borrowerLoanConfirmed ? "等待书主完成这笔旧订单的交接确认" : "拿到实体书后，请确认收书";
+    else if (loan.stage === "RETURN_REQUESTED") nextStep = loan.isOwner
+      ? loan.ownerReturnConfirmed ? "请完成这笔旧订单的归还记录" : "收到实体书后，请确认收回"
+      : "等待书主确认收回实体书";
+    else nextStep = loan.isOwner
+      ? loan.renewalRequested && !loan.renewed ? "借书家庭申请续借，请处理" : "借阅中；收到实体书后确认收回"
+      : "请在到期前将书交还书主";
     return (
       <article className="order-card" key={loan.id}>
         <div className="order-head">
           <BookCover book={book} />
           <div>
-            <span className="status available">{statusText[loan.stage]}</span>
+            <span className="status available">{statusLabel}</span>
             <h2>{loan.bookTitle}</h2>
             <p>
               {loan.isOwner
@@ -325,145 +365,107 @@ function App() {
             </p>
           </div>
         </div>
+        <ol className="loan-steps" aria-label="借阅进度">
+          {["申请", "取书", "阅读", "归还"].map((label, index) => (
+            <li key={label} className={index < step ? "done" : index === step ? "current" : ""}>
+              <span aria-hidden="true">{index < step ? "✓" : index + 1}</span>
+              <strong>{label}</strong>
+            </li>
+          ))}
+        </ol>
+        <div className={`next-step ${needsAttention(loan) ? "needs-attention" : ""}`}>
+          <small>{needsAttention(loan) ? "轮到你操作" : "当前进展"}</small>
+          <strong>{nextStep}</strong>
+        </div>
         {loan.stage === "REQUESTED" && (
           <>
             <p className="order-tip">
               申请提交后 48 小时内处理；超时会自动结束。
             </p>
+            {loan.isOwner && (
+              <div className="place-box">
+                <label>
+                  <strong>公共交接地点</strong>
+                  <input
+                    value={place}
+                    maxLength={120}
+                    onChange={(event) => setPlaces((current) => ({ ...current, [loan.id]: event.target.value }))}
+                    placeholder="例如：社区图书馆门口"
+                  />
+                </label>
+                <small>仅借阅双方可见。请勿填写家庭住址或联系方式。</small>
+              </div>
+            )}
             <div className="action-row">
               {loan.isOwner ? (
                 <>
-                  <button
-                    className="primary-button"
-                    disabled={busy}
-                    onClick={() => act(loan, "approve")}
-                  >
-                    同意申请
-                  </button>
-                  <button
-                    className="secondary-button"
-                    disabled={busy}
-                    onClick={() => act(loan, "decline")}
-                  >
-                    拒绝
-                  </button>
+                  <button className="primary-button" disabled={busy || !place.trim()} onClick={() => act(loan, "approve", { place })}>确认地点并同意借出</button>
+                  <button className="secondary-button" disabled={busy} onClick={() => act(loan, "decline")}>拒绝申请</button>
                 </>
               ) : (
-                <>
-                  <span>等待书主审批</span>
-                  <button
-                    className="secondary-button"
-                    disabled={busy}
-                    onClick={() => act(loan, "cancel")}
-                  >
-                    取消申请
-                  </button>
-                </>
+                <button className="secondary-button" disabled={busy} onClick={() => act(loan, "cancel")}>取消申请</button>
               )}
             </div>
           </>
         )}
-        {["APPROVED", "HANDOFF_AGREED"].includes(loan.stage) && (
+        {loan.stage === "APPROVED" && (
           <>
             <div className="place-box">
               <label>
                 <strong>公共交接地点</strong>
                 <input
-                  value={places[loan.id] ?? loan.place}
-                  disabled={
-                    loan.ownerLoanConfirmed || loan.borrowerLoanConfirmed
-                  }
-                  onChange={(event) =>
-                    setPlaces((current) => ({
-                      ...current,
-                      [loan.id]: event.target.value,
-                    }))
-                  }
+                  value={place}
+                  maxLength={120}
+                  disabled={!loan.isOwner}
+                  onChange={(event) => setPlaces((current) => ({ ...current, [loan.id]: event.target.value }))}
                   placeholder="例如：社区图书馆门口"
                 />
               </label>
               <small>仅借阅双方可见。请勿填写家庭住址或联系方式。</small>
             </div>
-            <div className="action-row">
-              <button
-                className="secondary-button"
-                disabled={
-                  busy ||
-                  loan.ownerLoanConfirmed ||
-                  loan.borrowerLoanConfirmed ||
-                  !(places[loan.id] ?? loan.place).trim()
-                }
-                onClick={() =>
-                  act(loan, "set-place", {
-                    place: places[loan.id] ?? loan.place,
-                  })
-                }
-              >
-                保存地点
-              </button>
-              <button
-                className="primary-button"
-                disabled={busy || mineLend || !loan.place}
-                onClick={() => act(loan, "confirm-lend")}
-              >
-                {loan.isOwner ? "确认已借出" : "确认已收到书"}
-              </button>
+            {loan.isOwner && <div className="action-row"><button className="primary-button" disabled={busy || !place.trim()} onClick={() => act(loan, "set-place", { place })}>确认交接地点</button></div>}
+          </>
+        )}
+        {loan.stage === "HANDOFF_AGREED" && (
+          <>
+            <div className="place-box">
+              <strong>交接地点：{loan.place}</strong>
+              <small>借书家庭收到实体书并确认后，开始 14 天借期。</small>
             </div>
-            <p className="order-tip">
-              借方：{loan.borrowerLoanConfirmed ? "已确认" : "待确认"}　书主：
-              {loan.ownerLoanConfirmed ? "已确认" : "待确认"}。双方确认后开始 14
-              天借期。
-            </p>
+            <div className="action-row">
+              {!loan.isOwner && !loan.borrowerLoanConfirmed && <button className="primary-button" disabled={busy} onClick={() => act(loan, "confirm-lend")}>已拿到书</button>}
+              {loan.isOwner && loan.borrowerLoanConfirmed && !loan.ownerLoanConfirmed && <button className="primary-button" disabled={busy} onClick={() => act(loan, "confirm-lend")}>完成旧订单交接</button>}
+            </div>
+            {loan.isOwner && !loan.ownerLoanConfirmed && !loan.borrowerLoanConfirmed && (
+              <details className="loan-more">
+                <summary>修改交接地点</summary>
+                <div className="place-box"><label><strong>新的公共交接地点</strong><input value={place} maxLength={120} onChange={(event) => setPlaces((current) => ({ ...current, [loan.id]: event.target.value }))} /></label></div>
+                <button className="secondary-button" disabled={busy || !place.trim() || place.trim() === loan.place} onClick={() => act(loan, "set-place", { place })}>保存新地点</button>
+              </details>
+            )}
           </>
         )}
         {["LENT", "RETURN_REQUESTED"].includes(loan.stage) && (
           <>
             <div className="place-box">
-              <strong>
-                应归还日期：
-                {loan.dueAt
-                  ? new Date(loan.dueAt).toLocaleDateString("zh-CN")
-                  : "待确认"}
-              </strong>
-              <small>线下归还实体书后，请双方分别确认。</small>
+              <strong>应归还日期：{loan.dueAt ? dateLabel(loan.dueAt) : "待确认"}</strong>
+              {remainingDays !== null && <small>{remainingDays > 0 ? `还剩 ${remainingDays} 天` : remainingDays === 0 ? "今天到期" : `已逾期 ${-remainingDays} 天`}</small>}
+              <small>线下把实体书交还书主；书主收到后确认。</small>
             </div>
-            <p className="order-tip">
-              借方归还：{loan.borrowerReturnConfirmed ? "已确认" : "待确认"}
-              　书主收回：{loan.ownerReturnConfirmed ? "已确认" : "待确认"}
-            </p>
+            {loan.renewalRequested && !loan.renewed && <p className="order-tip">{loan.isOwner ? "借书家庭申请续借 14 天。" : "续借申请待书主处理。"}</p>}
             <div className="action-row">
-              <button
-                className="primary-button"
-                disabled={busy || mineReturn}
-                onClick={() => act(loan, "confirm-return")}
-              >
-                {loan.isOwner ? "确认已收回" : "确认已归还"}
-              </button>
-              {!loan.isOwner &&
-                !loan.renewed &&
-                !loan.renewalRequested &&
-                loan.stage === "LENT" && (
-                  <button
-                    className="secondary-button"
-                    disabled={busy}
-                    onClick={() => act(loan, "request-renew")}
-                  >
-                    申请续借
-                  </button>
-                )}
-              {loan.isOwner && loan.renewalRequested && !loan.renewed && (
-                <button
-                  className="secondary-button"
-                  disabled={busy}
-                  onClick={() => act(loan, "approve-renew")}
-                >
-                  同意续借 14 天
-                </button>
-              )}
-              {loan.renewalRequested && !loan.renewed && !loan.isOwner && (
-                <span>续借申请待书主处理</span>
-              )}
+              {loan.isOwner && <button className="primary-button" disabled={busy} onClick={() => act(loan, "confirm-return")}>{loan.ownerReturnConfirmed ? "完成旧订单归还" : "已收回书"}</button>}
+              {loan.isOwner && loan.stage === "LENT" && loan.renewalRequested && !loan.renewed && <button className="secondary-button" disabled={busy} onClick={() => act(loan, "approve-renew")}>同意续借 14 天</button>}
             </div>
+            {!loan.isOwner && loan.stage === "LENT" && (
+              <details className="loan-more">
+                <summary>归还与续借</summary>
+                <div className="action-row">
+                  <button className="secondary-button" disabled={busy} onClick={() => act(loan, "request-return")}>已送还，提醒书主</button>
+                  {!loan.renewed && !loan.renewalRequested && <button className="secondary-button" disabled={busy} onClick={() => act(loan, "request-renew")}>申请续借</button>}
+                </div>
+              </details>
+            )}
           </>
         )}
       </article>
@@ -666,8 +668,17 @@ function App() {
                   <p>{selectedBook.summary || "书主暂未填写简介。"}</p>
                 </section>
                 <div className="detail-safety">
-                  公共交接地点只向借阅双方展示。双方确认借出后，借期为 14 天。
+                  书主同意时确认公共交接地点。借书家庭收到书后，开始 14 天借期。
                 </div>
+                <section className="borrow-guide" aria-label="借阅步骤">
+                  <h2>四步完成借阅</h2>
+                  <ol>
+                    <li><b>1</b><span>申请<br /><small>书主同意并确定地点</small></span></li>
+                    <li><b>2</b><span>取书<br /><small>借方收到书后确认</small></span></li>
+                    <li><b>3</b><span>阅读<br /><small>借期 14 天</small></span></li>
+                    <li><b>4</b><span>归还<br /><small>书主收回书后确认</small></span></li>
+                  </ol>
+                </section>
                 {selectedBook.mine ? (
                   <button
                     className="primary-button"
@@ -678,7 +689,10 @@ function App() {
                 ) : selectedLoan ? (
                   <button
                     className="primary-button"
-                    onClick={() => go("tasks")}
+                    onClick={() => {
+                      setTaskTab("progress");
+                      go("tasks");
+                    }}
                   >
                     查看这笔借阅
                   </button>
@@ -805,8 +819,8 @@ function App() {
                 <h3>发布后会怎样？</h3>
                 <ol>
                   <li>其他家庭可在找书页看到这本书</li>
-                  <li>申请后由你在待办中审批</li>
-                  <li>双方在订单里确认交接与归还</li>
+                  <li>申请后由你确认交接地点并同意</li>
+                  <li>借方取书后确认，归还时由你确认收回</li>
                 </ol>
               </aside>
             </div>
@@ -817,7 +831,7 @@ function App() {
             <div className="page-title">
               <p className="eyebrow">每一步都有回应</p>
               <h1>消息与待办</h1>
-              <p>借阅双方可查看进展并分别确认交接。</p>
+              <p>申请、取书、阅读、归还，双方都能看到现在进行到哪一步。</p>
             </div>
             <div className="tabs">
               <button
@@ -827,6 +841,12 @@ function App() {
                 待办 {pendingCount > 0 && <em>{pendingCount}</em>}
               </button>
               <button
+                className={taskTab === "progress" ? "selected" : ""}
+                onClick={() => setTaskTab("progress")}
+              >
+                进行中 {activeLoans.length > 0 && <em>{activeLoans.length}</em>}
+              </button>
+              <button
                 className={taskTab === "messages" ? "selected" : ""}
                 onClick={() => setTaskTab("messages")}
               >
@@ -834,20 +854,30 @@ function App() {
               </button>
             </div>
             {taskTab === "todo" ? (
-              activeLoans.length ? (
+              todoLoans.length ? (
                 <div className="orders-list">
-                  {activeLoans.map(renderLoanCard)}
+                  {todoLoans.map(renderLoanCard)}
                 </div>
+              ) : (
+                <div className="empty-state">
+                  <h3>目前没有需要你处理的借阅</h3>
+                  <p>{activeLoans.length ? "进行中的借阅可以在旁边查看。" : "从找书页申请一本书，进展会显示在这里。"}</p>
+                  <button
+                    className="secondary-button"
+                    onClick={() => activeLoans.length ? setTaskTab("progress") : go("discover")}
+                  >
+                    {activeLoans.length ? "查看进行中" : "去找书"}
+                  </button>
+                </div>
+              )
+            ) : taskTab === "progress" ? (
+              activeLoans.length ? (
+                <div className="orders-list">{activeLoans.map(renderLoanCard)}</div>
               ) : (
                 <div className="empty-state">
                   <h3>目前没有进行中的借阅</h3>
                   <p>从找书页申请一本书，进展会显示在这里。</p>
-                  <button
-                    className="secondary-button"
-                    onClick={() => go("discover")}
-                  >
-                    去找书
-                  </button>
+                  <button className="secondary-button" onClick={() => go("discover")}>去找书</button>
                 </div>
               )
             ) : (
@@ -866,8 +896,9 @@ function App() {
                             : `书主家庭：${loan.owner}`}
                         </p>
                         <small>
-                          申请于{" "}
-                          {new Date(loan.requestedAt).toLocaleString("zh-CN")}
+                          申请 {new Date(loan.requestedAt).toLocaleString("zh-CN")}
+                          {loan.lentAt && <> · 取书 {new Date(loan.lentAt).toLocaleString("zh-CN")}</>}
+                          {loan.returnedAt && <> · 归还 {new Date(loan.returnedAt).toLocaleString("zh-CN")}</>}
                         </small>
                       </div>
                     </article>
@@ -985,7 +1016,7 @@ function App() {
                     <button
                       key={loan.id}
                       onClick={() => {
-                        setTaskTab("messages");
+                        setTaskTab(active.has(loan.stage) ? "progress" : "messages");
                         go("tasks");
                       }}
                     >
