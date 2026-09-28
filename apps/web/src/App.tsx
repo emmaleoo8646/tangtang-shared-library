@@ -85,6 +85,8 @@ function App() {
     (loan) => loan.bookId === selectedId && active.has(loan.stage),
   );
   const activeLoans = loans.filter((loan) => active.has(loan.stage));
+  const pendingCount = activeLoans.length;
+  const pendingBadge = pendingCount > 99 ? "99+" : pendingCount;
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   const authReady = authMode === "login"
     ? Boolean(account.trim() && password)
@@ -124,12 +126,12 @@ function App() {
     void refresh().catch((error) => flash((error as Error).message));
   }, []);
   useEffect(() => {
-    if (page !== "tasks" && page !== "library") return;
+    if (!family) return;
     const timer = window.setInterval(() => {
       void refresh().catch(() => {});
     }, 20000);
     return () => window.clearInterval(timer);
-  }, [page]);
+  }, [family?.id]);
   function go(target: Page) {
     if (target !== "discover" && target !== "detail" && !family) {
       setRequestedPage(target);
@@ -489,9 +491,13 @@ function App() {
                 key={item.page}
                 className={page === item.page ? "active" : ""}
                 onClick={() => go(item.page)}
+                aria-label={item.page === "tasks" && pendingCount > 0 ? `${item.label}，${pendingCount} 条待办` : undefined}
               >
                 <span aria-hidden="true">{item.icon}</span>
                 {item.label}
+                {item.page === "tasks" && pendingCount > 0 && (
+                  <span className="nav-badge" aria-hidden="true">{pendingBadge}</span>
+                )}
               </button>
             ))}
           </nav>
@@ -818,7 +824,7 @@ function App() {
                 className={taskTab === "todo" ? "selected" : ""}
                 onClick={() => setTaskTab("todo")}
               >
-                待办 {activeLoans.length > 0 && <em>{activeLoans.length}</em>}
+                待办 {pendingCount > 0 && <em>{pendingCount}</em>}
               </button>
               <button
                 className={taskTab === "messages" ? "selected" : ""}
@@ -1101,10 +1107,13 @@ function App() {
             key={item.page}
             className={page === item.page ? "active" : ""}
             onClick={() => go(item.page)}
+            aria-label={item.page === "tasks" && pendingCount > 0 ? `${item.label}，${pendingCount} 条待办` : undefined}
           >
             <span aria-hidden="true">{item.icon}</span>
             <span>{item.label}</span>
-            {item.page === "tasks" && activeLoans.length > 0 && <i />}
+            {item.page === "tasks" && pendingCount > 0 && (
+              <span className="nav-badge" aria-hidden="true">{pendingBadge}</span>
+            )}
           </button>
         ))}
       </nav>

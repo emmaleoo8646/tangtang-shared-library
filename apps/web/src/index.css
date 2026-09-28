@@ -9,3 +9,6 @@
 .child-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid #efe4d5;color:#715c50}.child-row .secondary-button{font-size:12px;min-height:32px;padding:5px 9px}.account-actions{margin-top:32px;padding-top:20px;border-top:1px solid #efe4d5}.account-actions p{margin-top:9px;color:#967e72;font-size:13px;line-height:1.5}
 .site-footer{padding:14px 20px 26px;text-align:center;color:#8c776b;font-size:12px}.site-footer a{text-decoration:none}.site-footer a:hover{text-decoration:underline}
 .auth-switches{display:flex;justify-content:center;flex-wrap:wrap;gap:8px 18px}.auth-switches button{border:0;background:transparent;color:#b9573b;font-size:13px;font-weight:800;padding:4px}.auth-switches button:hover{text-decoration:underline}
+
+.nav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 5px;border-radius:999px;background:#dc3e3e;color:#fff;font-size:11px;font-weight:900;line-height:1;box-shadow:0 0 0 2px #fffdf9}
+@media(max-width:700px){.mobile-nav .nav-badge{position:absolute;top:-6px;left:calc(50% + 7px);min-width:18px;height:18px;padding:0 4px;font-size:10px}}
