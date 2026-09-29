@@ -1,0 +1,1 @@
+ALTER TABLE "Book" ADD COLUMN "nonChildren" BOOLEAN NOT NULL DEFAULT false;

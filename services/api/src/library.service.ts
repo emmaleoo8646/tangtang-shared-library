@@ -2,18 +2,13 @@ import {
   BadRequestException, ConflictException, ForbiddenException, Injectable,
   NotFoundException, OnModuleDestroy, OnModuleInit, UnauthorizedException,
 } from '@nestjs/common';
-import { BookCondition, BookStatus, EmailCodePurpose, Prisma, PrismaClient } from '@prisma/client';
+import { BookStatus, EmailCodePurpose, OptionKind, Prisma, PrismaClient } from '@prisma/client';
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomInt, scrypt, timingSafeEqual } from 'node:crypto';
 import { requireEmailDelivery, sendAccountCode } from './email.js';
+import { decodeCover, recognizeCover, summarizeBook } from './book-assist.js';
 
-const ageMap: Record<string, 'AGE_4_6' | 'AGE_7_9' | 'AGE_10_12'> = {
-  '3—6 岁': 'AGE_4_6', '6—9 岁': 'AGE_7_9', '9—12 岁': 'AGE_10_12',
-};
-const conditionMap: Record<string, BookCondition> = {
-  '九成新': 'LIKE_NEW', '八成新': 'GOOD', '七成新': 'FAIR', '有明显使用痕迹': 'WELL_LOVED',
-};
-const ageLabel = Object.fromEntries(Object.entries(ageMap).map(([label, value]) => [value, label]));
-const conditionLabel = Object.fromEntries(Object.entries(conditionMap).map(([label, value]) => [value, label]));
+const bookInclude = { ownerFamily: { select: { displayName: true } }, categoryOption: true, ageOption: true, conditionOption: true } as const;
+type BookRow = Omit<Prisma.BookGetPayload<{ include: typeof bookInclude }>, 'coverData'>;
 
 function text(value: unknown, name: string, max: number, required = false) {
   if (typeof value !== 'string') throw new BadRequestException(`${name}格式不正确`);
@@ -37,6 +32,12 @@ function emailAddress(value: unknown) {
   const email = text(value, '邮箱', 254, true).toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new BadRequestException('邮箱格式不正确');
   return email;
+}
+function phoneNumber(value: unknown) {
+  const input = text(value, '联系电话', 24, true).replace(/[\s()-]/g, '');
+  const number = /^1[3-9]\d{9}$/.test(input) ? `+86${input}` : input;
+  if (!/^\+[1-9]\d{7,14}$/.test(number)) throw new BadRequestException('请输入有效的联系电话，例如 13800138000');
+  return number;
 }
 function usernameValue(value: unknown) {
   const username = text(value, '账号', 24, true).toLowerCase();
@@ -109,6 +110,22 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
     return family;
   }
 
+  async options(includeInactive = true) {
+    const rows = await this.catalogOption.findMany({ where: includeInactive ? {} : { active: true }, orderBy: [{ kind: 'asc' }, { sortOrder: 'asc' }, { label: 'asc' }] });
+    return {
+      categories: rows.filter(row => row.kind === 'CATEGORY'),
+      ages: rows.filter(row => row.kind === 'AGE'),
+      conditions: rows.filter(row => row.kind === 'CONDITION'),
+    };
+  }
+
+  private async resolveOption(kind: OptionKind, value: unknown, currentId?: string | null) {
+    const input = text(value, '选项', 100, true);
+    const option = await this.catalogOption.findFirst({ where: { kind, OR: [{ id: input }, { label: input }] } });
+    if (!option || (!option.active && option.id !== currentId)) throw new BadRequestException('所选选项已停用或不存在');
+    return option;
+  }
+
   async requestEmailCode(body: Record<string, unknown>) {
     const email = emailAddress(body.email);
     const purpose = body.purpose === 'register' ? EmailCodePurpose.REGISTER : body.purpose === 'reset' ? EmailCodePurpose.RESET : null;
@@ -162,6 +179,7 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
     const email = emailAddress(body.email);
     const password = passwordValue(body.password);
     const nickname = body.nickname === undefined ? username : text(body.nickname, '书屋昵称', 30, true);
+    const phone = phoneNumber(body.phone);
     const emailHash = digest(`email:${email}`);
     const codeHash = await this.checkEmailCode(emailHash, EmailCodePurpose.REGISTER, body.code);
     if (await this.family.findFirst({ where: { OR: [{ username }, { emailLookupHash: emailHash }] } })) throw new ConflictException('账号或邮箱已注册');
@@ -170,7 +188,7 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
     const family = await this.$transaction(async tx => {
       const consumed = await tx.emailCode.deleteMany({ where: { emailHash, purpose: EmailCodePurpose.REGISTER, codeHash, expiresAt: { gt: new Date() }, attempts: { lt: 5 } } });
       if (consumed.count !== 1) throw new UnauthorizedException('验证码已失效');
-      const created = await tx.family.create({ data: { username, emailLookupHash: emailHash, emailCiphertext: encrypt(email), emailVerifiedAt: new Date(), passwordHash, displayName: nickname } });
+      const created = await tx.family.create({ data: { username, emailLookupHash: emailHash, emailCiphertext: encrypt(email), phoneCiphertext: encrypt(phone), emailVerifiedAt: new Date(), passwordHash, displayName: nickname } });
       await tx.session.create({ data: { familyId: created.id, tokenHash: digest(token), expiresAt: new Date(Date.now() + 30 * 24 * 3600_000) } });
       return created;
     });
@@ -222,22 +240,22 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
   }
 
   async me(familyId: string) {
-    const family = await this.family.findUniqueOrThrow({ where: { id: familyId }, include: { children: true } });
-    return { id: family.id, username: family.username, email: decrypt(family.emailCiphertext), displayName: family.displayName, children: family.children.map(child => ({ id: child.id, nickname: child.nickname, age: ageLabel[child.ageBand] ?? '其他', readingPreferences: child.readingPreferences })) };
+    const family = await this.family.findUniqueOrThrow({ where: { id: familyId }, include: { children: { include: { ageOption: true } } } });
+    return { id: family.id, username: family.username, email: decrypt(family.emailCiphertext), phone: decrypt(family.phoneCiphertext), phoneVerified: false, displayName: family.displayName, children: family.children.map(child => ({ id: child.id, nickname: child.nickname, age: child.ageOption.label, ageOptionId: child.ageOptionId, readingPreferences: child.readingPreferences })) };
   }
 
   async updateMe(familyId: string, body: Record<string, unknown>) {
     const displayName = text(body.displayName, '书屋昵称', 30, true);
-    await this.family.update({ where: { id: familyId }, data: { displayName } });
+    const phoneCiphertext = body.phone === undefined ? undefined : encrypt(phoneNumber(body.phone));
+    await this.family.update({ where: { id: familyId }, data: { displayName, phoneCiphertext } });
     return this.me(familyId);
   }
 
   async addChild(familyId: string, body: Record<string, unknown>) {
     const nickname = text(body.nickname, '孩子昵称', 30, true);
-    const age = text(body.age, '年龄段', 20, true);
-    if (!ageMap[age]) throw new BadRequestException('年龄段不正确');
+    const age = await this.resolveOption(OptionKind.AGE, body.ageOptionId ?? body.age);
     const preferences = Array.isArray(body.readingPreferences) ? body.readingPreferences.map(value => text(value, '阅读偏好', 30, true)).slice(0, 10) : [];
-    await this.childProfile.create({ data: { familyId, nickname, ageBand: ageMap[age], readingPreferences: preferences } });
+    await this.childProfile.create({ data: { familyId, nickname, ageOptionId: age.id, readingPreferences: preferences } });
     return this.me(familyId);
   }
 
@@ -261,25 +279,69 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
 
   async books(familyId?: string) {
     await this.expireRequests();
-    const rows = await this.book.findMany({ where: { OR: [{ status: { notIn: ['DRAFT', 'OFF_SHELF'] } }, ...(familyId ? [{ ownerFamilyId: familyId }] : [])] }, include: { ownerFamily: { select: { displayName: true } } }, orderBy: { createdAt: 'desc' }, take: 200 });
+    const rows = await this.book.findMany({ where: { OR: [{ status: { notIn: ['DRAFT', 'OFF_SHELF'] } }, ...(familyId ? [{ ownerFamilyId: familyId }] : [])] }, include: bookInclude, omit: { coverData: true }, orderBy: { createdAt: 'desc' }, take: 200 });
     return rows.map(row => this.bookView(row, familyId));
   }
 
-  private bookView(row: Prisma.BookGetPayload<{ include: { ownerFamily: { select: { displayName: true } } } }>, familyId?: string) {
-    return { id: row.id, title: row.title, author: row.author ?? '作者待确认', category: row.category ?? '其他', age: ageLabel[row.suggestedAgeBand ?? ''] ?? '待确认', condition: conditionLabel[row.condition], owner: row.ownerFamily.displayName, summary: row.summary ?? '', available: row.status === 'AVAILABLE', offShelf: row.status === 'OFF_SHELF', mine: row.ownerFamilyId === familyId, tone: 'mint' };
+  private bookView(row: BookRow, familyId?: string) {
+    return { id: row.id, title: row.title, author: row.author ?? '', category: row.categoryOption?.label ?? '其他', categoryOptionId: row.categoryOptionId, age: row.ageOption?.label ?? '待确认', ageOptionId: row.ageOptionId, condition: row.conditionOption.label, conditionOptionId: row.conditionOptionId, owner: row.ownerFamily.displayName, summary: row.summary ?? '', nonChildren: row.nonChildren, coverUrl: row.coverMimeType ? `/api/books/${row.id}/cover?v=${row.updatedAt.getTime()}` : null, available: row.status === 'AVAILABLE', offShelf: row.status === 'OFF_SHELF', editable: row.ownerFamilyId === familyId && ['AVAILABLE', 'OFF_SHELF'].includes(row.status), mine: row.ownerFamilyId === familyId, tone: 'mint' };
+  }
+
+  async cover(bookId: string, familyId?: string) {
+    const book = await this.book.findUnique({ where: { id: bookId }, select: { ownerFamilyId: true, status: true, coverMimeType: true, coverData: true } });
+    if (!book?.coverData || !book.coverMimeType || ((book.status === 'DRAFT' || book.status === 'OFF_SHELF') && book.ownerFamilyId !== familyId)) throw new NotFoundException('封面不存在');
+    return { mimeType: book.coverMimeType, data: Buffer.from(book.coverData) };
+  }
+
+  async recognizeBookCover(body: Record<string, unknown>) {
+    const image = await decodeCover(body.coverImage);
+    const metadata = await recognizeCover(image);
+    if (!metadata.title) return { ...metadata, summary: '', sources: [], notice: '未能从封面确认书名，请手动填写' };
+    try {
+      return { ...metadata, ...await summarizeBook(metadata.title, metadata.author) };
+    } catch {
+      return { ...metadata, summary: '', sources: [], notice: '已识别封面；简介暂未查到可靠资料，可手动填写或稍后重试' };
+    }
+  }
+
+  async summarizeBookDetails(body: Record<string, unknown>) {
+    return summarizeBook(text(body.title, '书名', 100, true), text(body.author ?? '', '作者', 100));
   }
 
   async createBook(familyId: string, body: Record<string, unknown>) {
     if (body.privacyConfirmed !== true) throw new BadRequestException('请先核对图书内容与隐私');
     const title = text(body.title, '书名', 100, true);
     const author = text(body.author ?? '', '作者', 100);
-    const category = text(body.category ?? '其他', '分类', 30, true);
-    const age = text(body.age, '年龄段', 20, true);
-    const condition = text(body.condition, '新旧程度', 30, true);
+    const category = await this.resolveOption(OptionKind.CATEGORY, body.categoryOptionId ?? body.category ?? '其他');
+    const age = await this.resolveOption(OptionKind.AGE, body.ageOptionId ?? body.age);
+    const condition = await this.resolveOption(OptionKind.CONDITION, body.conditionOptionId ?? body.condition);
     const summary = text(body.summary ?? '', '简介', 1000);
-    if (!ageMap[age] || !conditionMap[condition]) throw new BadRequestException('年龄段或新旧程度不正确');
-    const row = await this.book.create({ data: { ownerFamilyId: familyId, title, author, category, suggestedAgeBand: ageMap[age], condition: conditionMap[condition], summary, status: 'AVAILABLE' }, include: { ownerFamily: { select: { displayName: true } } } });
+    if (body.nonChildren !== undefined && typeof body.nonChildren !== 'boolean') throw new BadRequestException('读物标记不正确');
+    const cover = body.coverImage == null ? null : await decodeCover(body.coverImage);
+    const row = await this.book.create({ data: { ownerFamilyId: familyId, title, author, categoryOptionId: category.id, ageOptionId: age.id, conditionOptionId: condition.id, summary, nonChildren: body.nonChildren === true, coverMimeType: cover?.mimeType, coverData: cover?.data, status: 'AVAILABLE' }, include: bookInclude, omit: { coverData: true } });
     return this.bookView(row, familyId);
+  }
+
+  async editBook(familyId: string, bookId: string, body: Record<string, unknown>) {
+    const previous = await this.book.findUnique({ where: { id: bookId }, select: { ownerFamilyId: true, status: true, updatedAt: true, categoryOptionId: true, ageOptionId: true, conditionOptionId: true } });
+    if (!previous || previous.ownerFamilyId !== familyId) throw new NotFoundException('图书不存在');
+    if (!['AVAILABLE', 'OFF_SHELF'].includes(previous.status)) throw new ConflictException('借阅申请或借出期间不能编辑图书');
+    const [category, age, condition] = await Promise.all([
+      this.resolveOption(OptionKind.CATEGORY, body.categoryOptionId ?? body.category, previous.categoryOptionId),
+      this.resolveOption(OptionKind.AGE, body.ageOptionId ?? body.age, previous.ageOptionId),
+      this.resolveOption(OptionKind.CONDITION, body.conditionOptionId ?? body.condition, previous.conditionOptionId),
+    ]);
+    const cover = body.coverImage === undefined || body.coverImage === null ? null : await decodeCover(body.coverImage);
+    if (body.nonChildren !== undefined && typeof body.nonChildren !== 'boolean') throw new BadRequestException('读物标记不正确');
+    const data: Prisma.BookUncheckedUpdateManyInput = {
+      title: text(body.title, '书名', 100, true), author: text(body.author ?? '', '作者', 100),
+      summary: text(body.summary ?? '', '简介', 1000), ...(body.nonChildren !== undefined ? { nonChildren: body.nonChildren } : {}), categoryOptionId: category.id,
+      ageOptionId: age.id, conditionOptionId: condition.id,
+      ...(cover ? { coverMimeType: cover.mimeType, coverData: cover.data } : {}),
+    };
+    const changed = await this.book.updateMany({ where: { id: bookId, ownerFamilyId: familyId, status: { in: ['AVAILABLE', 'OFF_SHELF'] }, updatedAt: previous.updatedAt }, data });
+    if (!changed.count) throw new ConflictException('图书状态已变化，请刷新后重试');
+    return this.bookView(await this.book.findUniqueOrThrow({ where: { id: bookId }, include: bookInclude, omit: { coverData: true } }), familyId);
   }
 
   async setBookStatus(familyId: string, bookId: string, status: 'AVAILABLE' | 'OFF_SHELF') {
@@ -290,8 +352,8 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
 
   async loans(familyId: string) {
     await this.expireRequests();
-    const rows = await this.loan.findMany({ where: { OR: [{ ownerFamilyId: familyId }, { borrowerFamilyId: familyId }] }, include: { book: true, ownerFamily: { select: { displayName: true } }, borrowerFamily: { select: { displayName: true } } }, orderBy: { createdAt: 'desc' }, take: 200 });
-    return rows.map(row => ({ id: row.id, bookId: row.bookId, bookTitle: row.book.title, owner: row.ownerFamily.displayName, borrower: row.borrowerFamily.displayName, isOwner: row.ownerFamilyId === familyId, stage: row.status, place: decrypt(row.handoffDetailsCiphertext), borrowerLoanConfirmed: !!row.borrowerLentConfirmedAt, ownerLoanConfirmed: !!row.ownerLentConfirmedAt, borrowerReturnConfirmed: !!row.borrowerReturnConfirmedAt, ownerReturnConfirmed: !!row.ownerReturnConfirmedAt, renewalRequested: !!row.renewalRequestedAt, renewed: !!row.renewedAt, dueAt: row.dueAt?.toISOString() ?? null, requestedAt: row.requestedAt.toISOString(), approvedAt: row.approvedAt?.toISOString() ?? null, lentAt: row.lentAt?.toISOString() ?? null, returnedAt: row.returnedAt?.toISOString() ?? null }));
+    const rows = await this.loan.findMany({ where: { OR: [{ ownerFamilyId: familyId }, { borrowerFamilyId: familyId }] }, include: { book: { select: { title: true } }, ownerFamily: { select: { displayName: true, phoneCiphertext: true } }, borrowerFamily: { select: { displayName: true, phoneCiphertext: true } } }, orderBy: { createdAt: 'desc' }, take: 200 });
+    return rows.map(row => ({ id: row.id, bookId: row.bookId, bookTitle: row.book.title, owner: row.ownerFamily.displayName, borrower: row.borrowerFamily.displayName, isOwner: row.ownerFamilyId === familyId, stage: row.status, place: decrypt(row.handoffDetailsCiphertext), contactPhone: ['HANDOFF_AGREED', 'LENT', 'RETURN_REQUESTED'].includes(row.status) ? decrypt(row.ownerFamilyId === familyId ? row.borrowerFamily.phoneCiphertext : row.ownerFamily.phoneCiphertext) : null, borrowerLoanConfirmed: !!row.borrowerLentConfirmedAt, ownerLoanConfirmed: !!row.ownerLentConfirmedAt, borrowerReturnConfirmed: !!row.borrowerReturnConfirmedAt, ownerReturnConfirmed: !!row.ownerReturnConfirmedAt, renewalRequested: !!row.renewalRequestedAt, renewed: !!row.renewedAt, dueAt: row.dueAt?.toISOString() ?? null, requestedAt: row.requestedAt.toISOString(), approvedAt: row.approvedAt?.toISOString() ?? null, lentAt: row.lentAt?.toISOString() ?? null, returnedAt: row.returnedAt?.toISOString() ?? null }));
   }
 
   async apply(familyId: string, bookId: string) {
@@ -353,5 +415,109 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
       if (bookStatus) await tx.book.update({ where: { id: loan.bookId }, data: { status: bookStatus } });
       return { ok: true };
     });
+  }
+
+  async getAdmin(token?: string) {
+    if (!token || !/^[a-f0-9]{64}$/.test(token)) return null;
+    const session = await this.adminSession.findUnique({ where: { tokenHash: digest(`admin:${token}`) }, include: { admin: true } });
+    return session && session.expiresAt > new Date() && session.admin.active ? session.admin : null;
+  }
+
+  requireAdmin(admin: Awaited<ReturnType<LibraryService['getAdmin']>>) {
+    if (!admin) throw new UnauthorizedException('请先以管理员身份登录');
+    return admin;
+  }
+
+  async adminLogin(body: Record<string, unknown>) {
+    const username = usernameValue(body.username);
+    const password = passwordValue(body.password);
+    const key = digest(`admin-login:${username}`);
+    const throttle = await this.authThrottle.findUnique({ where: { identifierHash: key } });
+    if (throttle?.blockedUntil && throttle.blockedUntil > new Date()) throw new UnauthorizedException('账号或密码不正确，请稍后重试');
+    const admin = await this.adminAccount.findUnique({ where: { username } });
+    if (!admin?.active || !await matchesPassword(password, admin.passwordHash)) {
+      const now = new Date();
+      const recent = throttle && now.getTime() - throttle.windowStart.getTime() < 15 * 60_000;
+      const attempts = recent ? throttle.attempts + 1 : 1;
+      await this.authThrottle.upsert({ where: { identifierHash: key }, create: { identifierHash: key, attempts, windowStart: now, blockedUntil: attempts >= 8 ? new Date(now.getTime() + 15 * 60_000) : null }, update: { attempts, windowStart: recent ? undefined : now, blockedUntil: attempts >= 8 ? new Date(now.getTime() + 15 * 60_000) : null } });
+      throw new UnauthorizedException('账号或密码不正确');
+    }
+    await this.authThrottle.deleteMany({ where: { identifierHash: key } });
+    const token = randomBytes(32).toString('hex');
+    await this.adminSession.create({ data: { adminId: admin.id, tokenHash: digest(`admin:${token}`), expiresAt: new Date(Date.now() + 8 * 3600_000) } });
+    return { token, admin: { id: admin.id, username: admin.username } };
+  }
+
+  async adminLogout(token?: string) {
+    if (token && /^[a-f0-9]{64}$/.test(token)) await this.adminSession.deleteMany({ where: { tokenHash: digest(`admin:${token}`) } });
+    return { ok: true };
+  }
+
+  async createOption(adminId: string, body: Record<string, unknown>) {
+    const kind = body.kind;
+    if (kind !== 'CATEGORY' && kind !== 'AGE' && kind !== 'CONDITION') throw new BadRequestException('选项类型不正确');
+    const label = text(body.label, '选项名称', 30, true);
+    if (await this.catalogOption.findUnique({ where: { kind_label: { kind, label } } })) throw new ConflictException('选项已存在');
+    const last = await this.catalogOption.findFirst({ where: { kind }, orderBy: { sortOrder: 'desc' } });
+    return this.$transaction(async tx => {
+      const option = await tx.catalogOption.create({ data: { kind, label, sortOrder: (last?.sortOrder ?? 0) + 10 } });
+      await tx.adminAuditEvent.create({ data: { adminId, action: 'OPTION_CREATE', targetId: option.id } });
+      return option;
+    });
+  }
+
+  async updateOption(adminId: string, id: string, body: Record<string, unknown>) {
+    const current = await this.catalogOption.findUnique({ where: { id } });
+    if (!current) throw new NotFoundException('选项不存在');
+    const label = body.label === undefined ? current.label : text(body.label, '选项名称', 30, true);
+    const active = body.active === undefined ? current.active : body.active;
+    if (typeof active !== 'boolean') throw new BadRequestException('启用状态不正确');
+    const sortOrder = body.sortOrder === undefined ? current.sortOrder : body.sortOrder;
+    if (!Number.isInteger(sortOrder) || Number(sortOrder) < 0 || Number(sortOrder) > 100_000) throw new BadRequestException('排序值不正确');
+    if (!active && current.active && await this.catalogOption.count({ where: { kind: current.kind, active: true } }) <= 1) throw new ConflictException('每类至少保留一个可用选项');
+    const duplicate = await this.catalogOption.findUnique({ where: { kind_label: { kind: current.kind, label } } });
+    if (duplicate && duplicate.id !== id) throw new ConflictException('选项名称已存在');
+    return this.$transaction(async tx => {
+      const option = await tx.catalogOption.update({ where: { id }, data: { label, active, sortOrder: Number(sortOrder) } });
+      await tx.adminAuditEvent.create({ data: { adminId, action: 'OPTION_UPDATE', targetId: id } });
+      return option;
+    });
+  }
+
+  async adminOverview() {
+    const since = new Date(Date.now() - 30 * 86400_000);
+    const [users, activeUsers, recentUsers, books, loans, categories, recentLoans] = await Promise.all([
+      this.family.count(), this.family.count({ where: { status: 'ACTIVE' } }),
+      this.family.findMany({ where: { createdAt: { gte: since } }, select: { createdAt: true } }),
+      this.book.groupBy({ by: ['status'], _count: true }),
+      this.loan.groupBy({ by: ['status'], _count: true }),
+      this.catalogOption.findMany({ where: { kind: 'CATEGORY' }, select: { id: true, label: true, _count: { select: { booksByCategory: true } } } }),
+      this.loan.findMany({ where: { createdAt: { gte: since } }, select: { createdAt: true } }),
+    ]);
+    const days = Array.from({ length: 30 }, (_, i) => {
+      const date = new Date(Date.now() - (29 - i) * 86400_000);
+      const day = date.toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
+      return { day, users: 0, loans: 0 };
+    });
+    for (const row of recentUsers) { const day = row.createdAt.toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' }); const item = days.find(entry => entry.day === day); if (item) item.users++; }
+    for (const row of recentLoans) { const day = row.createdAt.toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' }); const item = days.find(entry => entry.day === day); if (item) item.loans++; }
+    return { users: { total: users, active: activeUsers, new30Days: recentUsers.length }, books: Object.fromEntries(books.map(row => [row.status, row._count])), loans: Object.fromEntries(loans.map(row => [row.status, row._count])), trend: days, categories: categories.map(row => ({ label: row.label, count: row._count.booksByCategory })) };
+  }
+
+  async adminUsers(pageValue: unknown) {
+    const page = Math.max(1, Math.min(100_000, Number(pageValue) || 1));
+    if (!Number.isInteger(page)) throw new BadRequestException('页码不正确');
+    const [total, rows] = await Promise.all([
+      this.family.count(),
+      this.family.findMany({ orderBy: { createdAt: 'desc' }, skip: (page - 1) * 20, take: 20, include: { _count: { select: { books: true, borrowedLoans: true, ownedLoans: true } } } }),
+    ]);
+    return { total, page, users: rows.map(row => ({ id: row.id, username: row.username, email: decrypt(row.emailCiphertext), displayName: row.displayName, status: row.status, createdAt: row.createdAt.toISOString(), phoneMasked: row.phoneCiphertext ? `${decrypt(row.phoneCiphertext).slice(0, 3)}••••${decrypt(row.phoneCiphertext).slice(-4)}` : '', phoneVerified: false, books: row._count.books, borrowed: row._count.borrowedLoans, lent: row._count.ownedLoans })) };
+  }
+
+  async adminPhone(adminId: string, familyId: string) {
+    const family = await this.family.findUnique({ where: { id: familyId }, select: { phoneCiphertext: true } });
+    if (!family) throw new NotFoundException('用户不存在');
+    await this.adminAuditEvent.create({ data: { adminId, action: 'PHONE_REVEAL', targetId: familyId } });
+    return { phone: decrypt(family.phoneCiphertext), verified: false };
   }
 }

@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { api, type Book, type Family, type Loan } from "./api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { api, type Book, type Family, type Loan, type OptionLists } from "./api";
+import { CoverCropDialog } from "./CoverCropDialog";
 
 type Page = "discover" | "detail" | "publish" | "tasks" | "library" | "profile";
 const statusText: Record<string, string> = {
@@ -13,6 +14,9 @@ const statusText: Record<string, string> = {
   REJECTED: "已拒绝",
   EXPIRED: "已超时",
 };
+function currentOptionsFallback(current: string, rows: OptionLists["categories"], fallback: string) {
+  return rows.some(option => option.id === current && option.active) ? current : (rows.find(option => option.active)?.id ?? fallback);
+}
 const active = new Set([
   "REQUESTED",
   "APPROVED",
@@ -50,6 +54,7 @@ function dateLabel(value: string) {
 }
 
 function BookCover({ book, large = false }: { book: Book; large?: boolean }) {
+  if (book.coverUrl) return <img className={`book-cover-image ${large ? "large" : ""}`} src={book.coverUrl} alt={`${book.title}封面`} />;
   return (
     <div
       className={`book-cover ${book.tone} ${large ? "large" : ""}`}
@@ -69,6 +74,7 @@ function App() {
   const [books, setBooks] = useState<Book[]>([]);
   const [loans, setLoans] = useState<Loan[]>([]);
   const [family, setFamily] = useState<Family | null>(null);
+  const [options, setOptions] = useState<OptionLists>({ categories: [], ages: [], conditions: [] });
   const [selectedId, setSelectedId] = useState("");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("全部");
@@ -87,20 +93,33 @@ function App() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [code, setCode] = useState("");
   const [nickname, setNickname] = useState("");
+  const [registrationPhone, setRegistrationPhone] = useState("");
+  const [profilePhone, setProfilePhone] = useState("");
   const [codeSent, setCodeSent] = useState(false);
   const [developmentCode, setDevelopmentCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
   const [title, setTitle] = useState("");
   const [author, setAuthor] = useState("");
-  const [publishCategory, setPublishCategory] = useState("绘本");
-  const [publishAge, setPublishAge] = useState("3—6 岁");
-  const [condition, setCondition] = useState("九成新");
+  const [publishCategory, setPublishCategory] = useState("category-picture");
+  const [publishAge, setPublishAge] = useState("age-3-6");
+  const [condition, setCondition] = useState("condition-like-new");
   const [summary, setSummary] = useState("");
+  const [nonChildren, setNonChildren] = useState(false);
+  const [coverImage, setCoverImage] = useState("");
+  const [coverChanged, setCoverChanged] = useState(false);
+  const [coverBytes, setCoverBytes] = useState(0);
+  const [pendingCover, setPendingCover] = useState<File | null>(null);
+  const [editingBookId, setEditingBookId] = useState<string | null>(null);
+  const [assistBusy, setAssistBusy] = useState<"recognize" | "summarize" | null>(null);
+  const [assistNotice, setAssistNotice] = useState("");
+  const [summarySources, setSummarySources] = useState<{ title: string; url: string }[]>([]);
+  const coverInput = useRef<HTMLInputElement>(null);
+  const assistRequest = useRef(0);
   const [privacyConfirmed, setPrivacyConfirmed] = useState(false);
   const [places, setPlaces] = useState<Record<string, string>>({});
   const [childNickname, setChildNickname] = useState("");
-  const [childAge, setChildAge] = useState("3—6 岁");
+  const [childAge, setChildAge] = useState("age-3-6");
 
   const selectedBook = books.find((book) => book.id === selectedId);
   const selectedLoan = loans.find(
@@ -111,9 +130,10 @@ function App() {
   const pendingCount = todoLoans.length;
   const pendingBadge = pendingCount > 99 ? "99+" : pendingCount;
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  const phoneValid = /^(?:1[3-9]\d{9}|\+[1-9]\d{7,14})$/.test(registrationPhone.replace(/[\s()-]/g, ""));
   const authReady = authMode === "login"
     ? Boolean(account.trim() && password)
-    : emailValid && code.length === 6 && password.length >= 10 && password === confirmPassword && (authMode === "reset" || /^[a-zA-Z0-9_]{4,24}$/.test(account));
+    : emailValid && code.length === 6 && password.length >= 10 && password === confirmPassword && (authMode === "reset" || (/^[a-zA-Z0-9_]{4,24}$/.test(account) && phoneValid));
   const results = useMemo(
     () =>
       books.filter((book) => {
@@ -134,8 +154,9 @@ function App() {
     window.setTimeout(() => setToast(""), 4000);
   }
   async function refresh() {
-    const list = await api<Book[]>("/books");
+    const [list, currentOptions] = await Promise.all([api<Book[]>("/books"), api<OptionLists>("/options")]);
     setBooks(list);
+    setOptions(currentOptions);
     try {
       const me = await api<Family>("/me");
       setFamily(me);
@@ -162,6 +183,17 @@ function App() {
       setLoginOpen(true);
       return;
     }
+    if (target === "publish") {
+      assistRequest.current++;
+      setAssistBusy(null);
+      setEditingBookId(null);
+      setTitle(""); setAuthor(""); setSummary(""); setNonChildren(false); setCoverImage(""); setCoverChanged(false); setCoverBytes(0);
+      setPublishCategory(current => currentOptionsFallback(current, options.categories, "category-picture"));
+      setPublishAge(current => currentOptionsFallback(current, options.ages, "age-3-6"));
+      setCondition(current => currentOptionsFallback(current, options.conditions, "condition-like-new"));
+      setPrivacyConfirmed(false); setAssistNotice(""); setSummarySources([]);
+    }
+    if (target === "profile" && family) { setProfilePhone(family.phone); setNickname(family.displayName); }
     setPage(target);
     window.scrollTo(0, 0);
   }
@@ -214,7 +246,7 @@ function App() {
         switchAuthMode("login");
         return;
       }
-      if (authMode === "register") await api("/auth/register", "POST", { username: account, email, password, code, nickname: nickname || account });
+      if (authMode === "register") await api("/auth/register", "POST", { username: account, email, phone: registrationPhone, password, code, nickname: nickname || account });
       else await api("/auth/login", "POST", { account, password });
       setLoginOpen(false);
       setPassword("");
@@ -241,22 +273,85 @@ function App() {
       return;
     }
     await run(async () => {
-      await api("/books", "POST", {
+      await api(editingBookId ? `/books/${editingBookId}` : "/books", editingBookId ? "PATCH" : "POST", {
         title,
         author,
-        category: publishCategory,
-        age: publishAge,
-        condition,
+        categoryOptionId: publishCategory,
+        ageOptionId: publishAge,
+        conditionOptionId: condition,
         summary,
+        nonChildren,
+        coverImage: coverChanged ? coverImage : undefined,
         privacyConfirmed,
       });
       setTitle("");
       setAuthor("");
       setSummary("");
+      setNonChildren(false);
+      setCoverImage("");
+      setCoverChanged(false);
+      setCoverBytes(0);
+      setEditingBookId(null);
+      setAssistNotice("");
+      setSummarySources([]);
       setPrivacyConfirmed(false);
       setPage("library");
       setLibraryTab("my");
-    }, "图书已发布");
+    }, editingBookId ? "图书信息已更新" : "图书已发布");
+  }
+
+  function chooseCover(file?: File) {
+    if (!file) return;
+    setPendingCover(file);
+  }
+
+  function startEdit(book: Book) {
+    if (!book.editable) { flash("借阅申请或借出期间不能编辑图书"); return; }
+    assistRequest.current++;
+    setAssistBusy(null);
+    setEditingBookId(book.id);
+    setTitle(book.title); setAuthor(book.author); setSummary(book.summary); setNonChildren(book.nonChildren);
+    setPublishCategory(book.categoryOptionId || "category-other");
+    setPublishAge(book.ageOptionId || "age-3-6");
+    setCondition(book.conditionOptionId);
+    setCoverImage(book.coverUrl || ""); setCoverChanged(false); setCoverBytes(0);
+    setAssistNotice(""); setSummarySources([]); setPrivacyConfirmed(true);
+    setPage("publish"); window.scrollTo(0, 0);
+  }
+
+  async function recognize(image = coverImage) {
+    if (!image) return;
+    const requestId = ++assistRequest.current;
+    setAssistBusy("recognize");
+    setAssistNotice("正在识别封面并检索图书资料，简介会自动填写…");
+    try {
+      const result = await api<{ title: string; author: string; category: string; summary: string; nonChildren?: boolean; sources: { title: string; url: string }[]; notice?: string }>("/books/recognize", "POST", { coverImage: image });
+      if (requestId !== assistRequest.current) return;
+      if (result.title) setTitle(result.title);
+      if (result.author) setAuthor(result.author);
+      const found = options.categories.find(option => option.label === result.category);
+      if (found) setPublishCategory(found.id);
+      if (result.summary) setSummary(result.summary);
+      if (typeof result.nonChildren === "boolean") setNonChildren(result.nonChildren);
+      setSummarySources(result.sources);
+      setAssistNotice(result.notice || "已自动识别封面并检索资料，请核对图书信息与简介。");
+    } catch (error) { if (requestId === assistRequest.current) { setAssistNotice("自动识别暂未完成，可手动填写，或点击按钮重试。"); flash((error as Error).message); } }
+    finally { if (requestId === assistRequest.current) setAssistBusy(null); }
+  }
+
+  async function generateSummary() {
+    if (!title.trim() || assistBusy) return;
+    const requestId = ++assistRequest.current;
+    setAssistBusy("summarize");
+    try {
+      const result = await api<{ summary: string; nonChildren: boolean; sources: { title: string; url: string }[] }>("/books/summarize", "POST", { title, author });
+      if (requestId !== assistRequest.current) return;
+      setSummary(result.summary);
+      setNonChildren(result.nonChildren);
+      setSummarySources(result.sources);
+      setAssistNotice("MiniMax 已检索图书资料，请核对简介内容。");
+    } catch (error) { if (requestId === assistRequest.current) flash((error as Error).message); }
+    finally { if (requestId === assistRequest.current) setAssistBusy(null); }
   }
   async function apply() {
     if (!selectedBook) return;
@@ -295,15 +390,15 @@ function App() {
     if (!family) return;
     await run(
       () =>
-        api("/me", "PATCH", { displayName: nickname || family.displayName }),
-      "书屋昵称已保存",
+        api("/me", "PATCH", { displayName: nickname || family.displayName, ...(profilePhone.trim() ? { phone: profilePhone.trim() } : {}) }),
+      "家庭资料已保存",
     );
   }
   async function addChild() {
     await run(async () => {
       await api("/me/children", "POST", {
         nickname: childNickname,
-        age: childAge,
+        ageOptionId: childAge,
       });
       setChildNickname("");
     }, "孩子档案已保存");
@@ -377,6 +472,7 @@ function App() {
           <small>{needsAttention(loan) ? "轮到你操作" : "当前进展"}</small>
           <strong>{nextStep}</strong>
         </div>
+        {loan.contactPhone !== null && <div className="loan-contact"><strong>{loan.isOwner ? "借书家庭电话" : "书主家庭电话"}</strong><span>{loan.contactPhone || "暂未提供"}</span><small>仅供本次借阅交接与订单异常联系</small></div>}
         {loan.stage === "REQUESTED" && (
           <>
             <p className="order-tip">
@@ -554,10 +650,7 @@ function App() {
                   aria-label="图书分类"
                 >
                   <option>全部</option>
-                  <option>绘本</option>
-                  <option>故事</option>
-                  <option>科普</option>
-                  <option>其他</option>
+                  {options.categories.map(option => <option key={option.id}>{option.label}</option>)}
                 </select>
                 <select
                   value={age}
@@ -565,9 +658,7 @@ function App() {
                   aria-label="适读年龄"
                 >
                   <option>全部</option>
-                  <option>3—6 岁</option>
-                  <option>6—9 岁</option>
-                  <option>9—12 岁</option>
+                  {options.ages.map(option => <option key={option.id}>{option.label}</option>)}
                 </select>
                 <label className="check-row">
                   <input
@@ -605,6 +696,7 @@ function App() {
                             ? "已下架"
                             : "借出中"}
                       </span>
+                      {book.nonChildren && <span className="non-child-badge">非儿童读物</span>}
                       <h3>{book.title}</h3>
                       <p>
                         {book.category} · {book.age}
@@ -662,6 +754,7 @@ function App() {
                   <span>{selectedBook.category}</span>
                   <span>{selectedBook.age}</span>
                   <span>{selectedBook.condition}</span>
+                  {selectedBook.nonChildren && <span className="non-child-badge">非儿童读物</span>}
                 </div>
                 <section className="detail-summary">
                   <h2>关于这本书</h2>
@@ -712,9 +805,9 @@ function App() {
         {page === "publish" && (
           <>
             <div className="page-title">
-              <p className="eyebrow">把好故事分享出去</p>
-              <h1>发布一本童书</h1>
-              <p>请家长核对信息后发布。拍照识书功能正在准备中。</p>
+              <p className="eyebrow">{editingBookId ? "整理我的藏书" : "把好故事分享出去"}</p>
+              <h1>{editingBookId ? "编辑图书" : "发布一本童书"}</h1>
+              <p>{editingBookId ? "修改书的信息与封面，保存后会更新展示。" : "拍一张封面，快速填写图书信息；发布前请家长认真核对。"}</p>
             </div>
             <div className="publish-layout">
               <div className="publish-form">
@@ -725,9 +818,24 @@ function App() {
                     <p>所有信息都由家长确认后才展示。</p>
                   </div>
                 </div>
+                <div className="cover-upload">
+                  <div className="cover-upload-preview">
+                    {coverImage ? <img src={coverImage} alt="待发布的图书封面" /> : <span aria-hidden="true">▧</span>}
+                  </div>
+                  <div className="cover-upload-content">
+                    <strong>添加封面照片</strong>
+                    <p>原图可达 20 MB，裁剪后仅上传不超过 600 KB 的封面。完成裁剪后会自动识别并检索简介。{coverChanged && coverBytes ? `当前封面 ${Math.round(coverBytes / 1000)} KB。` : ""}</p>
+                    <div className="cover-upload-actions">
+                      <input ref={coverInput} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" className="visually-hidden" aria-label="拍照或上传图书封面" onChange={(event) => { chooseCover(event.target.files?.[0]); event.target.value = ""; }} />
+                      <button type="button" className="secondary-button" onClick={() => coverInput.current?.click()}>{coverImage ? "更换照片" : "拍照 / 上传"}</button>
+                      <button type="button" className="ai-button" disabled={!coverChanged || !!assistBusy} onClick={() => void recognize()}>{assistBusy === "recognize" ? "识别中…" : "✦ AI 识别并填写"}</button>
+                    </div>
+                  </div>
+                </div>
+                {assistNotice && <p className="suggestion-note" role="status">{assistNotice}</p>}
                 <div className="field-grid">
                   <label>
-                    书名 <b>*</b>
+                    <span className="field-label">书名 <b>*</b></span>
                     <input
                       value={title}
                       maxLength={100}
@@ -751,10 +859,7 @@ function App() {
                         setPublishCategory(event.target.value)
                       }
                     >
-                      <option>绘本</option>
-                      <option>故事</option>
-                      <option>科普</option>
-                      <option>其他</option>
+                      {options.categories.filter(option => option.active || option.id === publishCategory).map(option => <option key={option.id} value={option.id}>{option.label}{option.active ? "" : "（已停用）"}</option>)}
                     </select>
                   </label>
                   <label>
@@ -763,9 +868,7 @@ function App() {
                       value={publishAge}
                       onChange={(event) => setPublishAge(event.target.value)}
                     >
-                      <option>3—6 岁</option>
-                      <option>6—9 岁</option>
-                      <option>9—12 岁</option>
+                      {options.ages.filter(option => option.active || option.id === publishAge).map(option => <option key={option.id} value={option.id}>{option.label}{option.active ? "" : "（已停用）"}</option>)}
                     </select>
                   </label>
                   <label>
@@ -774,22 +877,22 @@ function App() {
                       value={condition}
                       onChange={(event) => setCondition(event.target.value)}
                     >
-                      <option>九成新</option>
-                      <option>八成新</option>
-                      <option>七成新</option>
-                      <option>有明显使用痕迹</option>
+                      {options.conditions.filter(option => option.active || option.id === condition).map(option => <option key={option.id} value={option.id}>{option.label}{option.active ? "" : "（已停用）"}</option>)}
                     </select>
                   </label>
                   <label className="full-field">
-                    简单介绍
+                    <span className="summary-label"><span>简单介绍</span><button type="button" disabled={!title.trim() || !!assistBusy} onClick={() => void generateSummary()}>{assistBusy === "summarize" ? "检索中…" : "✦ AI 检索并生成"}</button></span>
                     <textarea
                       value={summary}
                       maxLength={1000}
                       onChange={(event) => setSummary(event.target.value)}
                       rows={4}
+                      placeholder="说说这本书的故事、主题或孩子喜欢它的原因"
                     />
                   </label>
                 </div>
+                <label className="audience-check"><input type="checkbox" checked={nonChildren} onChange={event => setNonChildren(event.target.checked)} /><span><strong>非儿童读物</strong><small>AI 会依据检索资料标记；如果判断有误，可以手动调整。标记不会阻止发布。</small></span></label>
+                {summarySources.length > 0 && <div className="summary-sources"><span>资料来源：</span>{summarySources.map((source, index) => <a key={`${source.url}-${index}`} href={source.url} target="_blank" rel="noopener noreferrer">{source.title}</a>)}</div>}
                 <label className="confirm-check">
                   <input
                     type="checkbox"
@@ -802,20 +905,14 @@ function App() {
                 </label>
                 <button
                   className="primary-button"
-                  disabled={busy || !title.trim()}
+                  disabled={busy || !!assistBusy || !title.trim()}
                   onClick={publish}
                 >
-                  确认发布
+                  {editingBookId ? "保存修改" : "确认发布"}
                 </button>
               </div>
               <aside className="publish-aside">
-                <div className="aside-cover">
-                  <strong>
-                    一本闲置书
-                    <br />
-                    下一段新旅程
-                  </strong>
-                </div>
+                <div className="aside-cover"><span>✦</span><strong>一本闲置书<br />下一段新旅程</strong></div>
                 <h3>发布后会怎样？</h3>
                 <ol>
                   <li>其他家庭可在找书页看到这本书</li>
@@ -965,44 +1062,21 @@ function App() {
                   {books
                     .filter((book) => book.mine)
                     .map((book) => (
-                      <button key={book.id} onClick={() => showBook(book.id)}>
-                        <BookCover book={book} />
-                        <span>
-                          <strong>{book.title}</strong>
-                          <small>
-                            {book.category} · {book.age}
-                          </small>
-                        </span>
-                        <span className="status available">
-                          {book.available
-                            ? "可借"
-                            : book.offShelf
-                              ? "已下架"
-                              : "借出中"}
-                        </span>
-                      </button>
-                    ))}
-                </div>
-                <div className="shelf-actions">
-                  {books
-                    .filter((book) => book.mine)
-                    .map((book) => (
-                      <button
-                        className="secondary-button"
-                        key={book.id}
-                        disabled={
-                          busy ||
-                          (!book.available &&
-                            loans.some(
-                              (loan) =>
-                                loan.bookId === book.id &&
-                                active.has(loan.stage),
-                            ))
-                        }
-                        onClick={() => setShelf(book)}
-                      >
-                        {book.title} · {book.available ? "下架" : "重新上架"}
-                      </button>
+                      <article className="shelf-book-card" key={book.id}>
+                        <button className="shelf-book-main" onClick={() => showBook(book.id)}>
+                          <BookCover book={book} />
+                          <span><strong>{book.title}</strong><small>{book.category} · {book.age}</small></span>
+                        </button>
+                        <div className="shelf-book-controls">
+                          <div className="shelf-book-badges">
+                            <span className={`status ${book.available ? "available" : "unavailable"}`}>{book.available ? "可借" : book.offShelf ? "不可借" : "借出中"}</span>
+                            <span className={`shelf-state ${book.offShelf ? "offline" : "online"}`}>{book.offShelf ? "已下架" : "已上架"}</span>
+                            {book.nonChildren && <span className="non-child-badge">非儿童读物</span>}
+                          </div>
+                          <button className="secondary-button shelf-edit" disabled={!book.editable || busy} title={book.editable ? "编辑图书" : "借阅申请或借出期间不能编辑"} onClick={() => startEdit(book)}>编辑</button>
+                          {(book.available || book.offShelf) && <button className="secondary-button" disabled={busy} onClick={() => setShelf(book)}>{book.available ? "下架" : "上架"}</button>}
+                        </div>
+                      </article>
                     ))}
                 </div>
               </>
@@ -1051,14 +1125,20 @@ function App() {
                     maxLength={30}
                   />
                 </label>
+                <label>
+                  联系电话
+                  <input type="tel" autoComplete="tel" value={profilePhone} onChange={(event) => setProfilePhone(event.target.value)} placeholder="大陆手机号或带国家区号的号码" />
+                </label>
               </div>
+              {!family.phone && <p className="phone-reminder">尚未填写联系电话。旧账号可以继续使用，建议补填以便借阅交接。</p>}
+              <p className="phone-purpose">用于借阅交接和订单异常联系；书主同意借阅后，仅向该笔借阅双方展示，管理员可在必要时联系；不在公开书目展示，不用于营销。号码暂未短信验证。</p>
               <div className="action-row">
                 <button
                   className="primary-button"
                   disabled={busy}
                   onClick={saveProfile}
                 >
-                  保存昵称
+                  保存资料
                 </button>
                 <button
                   className="secondary-button"
@@ -1098,9 +1178,7 @@ function App() {
                     value={childAge}
                     onChange={(event) => setChildAge(event.target.value)}
                   >
-                    <option>3—6 岁</option>
-                    <option>6—9 岁</option>
-                    <option>9—12 岁</option>
+                    {options.ages.filter(option => option.active).map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
                   </select>
                 </label>
               </div>
@@ -1131,6 +1209,7 @@ function App() {
         <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">
           陕ICP备2026026598号-1
         </a>
+        <a href={import.meta.env.DEV ? "http://127.0.0.1:5174/admin/" : "/admin/"}>管理员入口</a>
       </footer>
       <nav className="mobile-nav" aria-label="底部导航">
         {nav.map((item) => (
@@ -1198,15 +1277,17 @@ function App() {
                 </label>
               )}
               {authMode === "register" && (
-                <label>
-                  书屋昵称
-                  <input
-                    value={nickname}
-                    maxLength={30}
-                    onChange={(event) => setNickname(event.target.value)}
-                    placeholder="例如：糖糖书屋"
-                  />
-                </label>
+                <>
+                  <label>
+                    书屋昵称
+                    <input value={nickname} maxLength={30} onChange={(event) => setNickname(event.target.value)} placeholder="例如：糖糖书屋" />
+                  </label>
+                  <label>
+                    联系电话 <b>*</b>
+                    <input type="tel" autoComplete="tel" value={registrationPhone} onChange={(event) => setRegistrationPhone(event.target.value)} placeholder="大陆手机号或 +国家区号号码" />
+                  </label>
+                  <p className="phone-purpose">用于借阅交接和订单异常联系；书主同意借阅后，仅向该笔借阅双方展示，管理员可在必要时联系；不在公开书目展示，不用于营销。注册仍使用邮箱验证码，电话暂不发送短信验证。</p>
+                </>
               )}
               {authMode !== "login" && (
                 <>
@@ -1245,6 +1326,7 @@ function App() {
                   placeholder={authMode === "login" ? "请输入密码" : "至少 10 位"}
                 />
               </label>
+              {authMode !== "login" && <p className="password-example">密码至少 10 位。示例：Tangtang@2026（请勿直接使用这个示例）。</p>}
               {authMode !== "login" && (
                 <label>
                   确认密码
@@ -1272,6 +1354,7 @@ function App() {
           </div>
         </div>
       )}
+      {pendingCover && <CoverCropDialog file={pendingCover} onClose={() => setPendingCover(null)} onUse={(image, bytes) => { setCoverImage(image); setCoverBytes(bytes); setCoverChanged(true); setNonChildren(false); setPendingCover(null); void recognize(image); }} />}
     </div>
   );
 }

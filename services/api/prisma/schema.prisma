@@ -21,6 +21,12 @@ enum AgeBand {
   AGE_13_PLUS
 }
 
+enum OptionKind {
+  CATEGORY
+  AGE
+  CONDITION
+}
+
 enum BookCondition {
   LIKE_NEW
   GOOD
@@ -80,7 +86,8 @@ model ChildProfile {
   familyId           String
   family             Family   @relation(fields: [familyId], references: [id], onDelete: Cascade)
   nickname           String
-  ageBand            AgeBand
+  ageOptionId        String
+  ageOption          CatalogOption @relation("ChildAge", fields: [ageOptionId], references: [id])
   readingPreferences String[] @default([])
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
@@ -95,19 +102,73 @@ model Book {
   title            String
   author           String?
   summary          String?
-  category         String?
-  suggestedAgeBand AgeBand?
-  condition        BookCondition
+  nonChildren      Boolean        @default(false)
+  categoryOptionId String?
+  categoryOption   CatalogOption? @relation("BookCategory", fields: [categoryOptionId], references: [id])
+  ageOptionId      String?
+  ageOption        CatalogOption? @relation("BookAge", fields: [ageOptionId], references: [id])
+  conditionOptionId String
+  conditionOption   CatalogOption @relation("BookCondition", fields: [conditionOptionId], references: [id])
   status           BookStatus     @default(DRAFT)
   aiReviewStatus   AiReviewStatus @default(NOT_REQUESTED)
   coverObjectKey   String?
+  coverMimeType    String?
+  coverData        Bytes?
   loans            Loan[]
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
   @@index([ownerFamilyId, status])
   @@index([title])
-  @@index([category, suggestedAgeBand])
+  @@index([categoryOptionId, ageOptionId])
+}
+
+model CatalogOption {
+  id                  String @id @default(cuid())
+  kind                OptionKind
+  label               String
+  sortOrder           Int @default(0)
+  active              Boolean @default(true)
+  booksByCategory     Book[] @relation("BookCategory")
+  booksByAge          Book[] @relation("BookAge")
+  booksByCondition    Book[] @relation("BookCondition")
+  childrenByAge       ChildProfile[] @relation("ChildAge")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([kind, label])
+  @@index([kind, active, sortOrder])
+}
+
+model AdminAccount {
+  id           String @id @default(cuid())
+  username     String @unique
+  passwordHash String
+  active       Boolean @default(true)
+  sessions     AdminSession[]
+  auditEvents  AdminAuditEvent[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model AdminSession {
+  id        String @id @default(cuid())
+  adminId   String
+  admin     AdminAccount @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  tokenHash String @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([adminId])
+}
+
+model AdminAuditEvent {
+  id        String @id @default(cuid())
+  adminId   String
+  admin     AdminAccount @relation(fields: [adminId], references: [id])
+  action    String
+  targetId  String
+  createdAt DateTime @default(now())
 }
 
 model Loan {

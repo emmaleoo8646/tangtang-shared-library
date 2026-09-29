@@ -10,6 +10,7 @@ COPY services/api/prisma ./prisma
 RUN npx prisma generate
 COPY services/api/tsconfig*.json services/api/nest-cli.json ./
 COPY services/api/src ./src
+COPY services/api/scripts ./scripts
 RUN npm run build
 ENV NODE_ENV=production
 EXPOSE 3000

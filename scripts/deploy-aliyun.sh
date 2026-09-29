@@ -40,6 +40,10 @@ if ! ssh "$deploy_target" "grep -Fxq 'SITE_DOMAIN=$site_domain' '$shared_env'"; 
   echo "服务器 $shared_env 中的 SITE_DOMAIN 与本次测试域名不一致。" >&2
   exit 1
 fi
+if ! ssh "$deploy_target" "grep -Eq '^AI_API_KEY=[A-Za-z0-9._-]+$' '$shared_env'"; then
+  echo "服务器尚未配置 MiniMax API Key。请先在服务器私有 .env 中保存，再重试。" >&2
+  exit 1
+fi
 
 git archive --format=tar HEAD | ssh "$deploy_target" "install -d -m 755 '$release_dir' && tar -xf - -C '$release_dir'"
 

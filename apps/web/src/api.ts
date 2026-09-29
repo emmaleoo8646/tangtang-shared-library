@@ -3,12 +3,18 @@ export type Book = {
   title: string;
   author: string;
   category: string;
+  categoryOptionId: string | null;
   age: string;
+  ageOptionId: string | null;
   condition: string;
+  conditionOptionId: string;
   owner: string;
   summary: string;
+  nonChildren: boolean;
+  coverUrl: string | null;
   available: boolean;
   offShelf: boolean;
+  editable: boolean;
   mine: boolean;
   tone: string;
 };
@@ -21,6 +27,7 @@ export type Loan = {
   isOwner: boolean;
   stage: string;
   place: string;
+  contactPhone: string | null;
   dueAt: string | null;
   borrowerLoanConfirmed: boolean;
   ownerLoanConfirmed: boolean;
@@ -37,14 +44,20 @@ export type Family = {
   id: string;
   username: string | null;
   email: string;
+  phone: string;
+  phoneVerified: boolean;
   displayName: string;
   children: {
     id: string;
     nickname: string;
     age: string;
+    ageOptionId: string;
     readingPreferences: string[];
   }[];
 };
+
+export type CatalogOption = { id: string; kind: "CATEGORY" | "AGE" | "CONDITION"; label: string; active: boolean; sortOrder: number };
+export type OptionLists = { categories: CatalogOption[]; ages: CatalogOption[]; conditions: CatalogOption[] };
 
 export async function api<T>(
   path: string,

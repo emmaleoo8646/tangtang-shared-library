@@ -1,0 +1,2 @@
+ALTER TABLE "Book" ADD COLUMN "coverMimeType" TEXT;
+ALTER TABLE "Book" ADD COLUMN "coverData" BYTEA;

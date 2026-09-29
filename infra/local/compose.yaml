@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: tangtang
       POSTGRES_PASSWORD: tangtang_local_only
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${TANGTANG_DB_PORT:-5432}:5432"
     volumes:
       - tangtang_postgres_data:/var/lib/postgresql/data
     healthcheck:

@@ -7,6 +7,12 @@
 1. 在阿里云 DNS 为 `library` 新增 A 记录，指向这台 ECS 的公网 IP。确认 `douwuyou.cn` 的备案与当前站点信息适用。
 2. 在服务器 `/srv/tangtang-library/shared/.env` 填写 `infra/aliyun/.env.example` 中的变量。文件权限设为 `600`。`POSTGRES_PASSWORD` 和 `AUTH_SECRET` 各用独立随机值；`DATABASE_URL` 中的密码须与前者一致。不要把真实 `.env` 传到 Git。受控测试期必须设置 `TEST_EMAIL_ALLOWLIST` 为获准邮箱，使用英文逗号分隔。
 3. 注册验证和密码找回通过 SMTP 发送邮件。账号持有人需准备 SMTP 主机、465 或 587 端口、发件人地址和授权码，在服务器配置 `SMTP_*` 后重建 API 容器。发件授权码只保存在服务器，不传入 Git 或聊天。未配置邮件服务时，生产环境无法注册或找回密码。
+4. 拍照识书与联网简介使用 MiniMax。在服务器私有 `.env` 中配置 `AI_API_KEY`；发布脚本会先检查它是否存在。密钥不得写进 Git、命令参数或发布日志。账号持有人可以先把仓库中的交互脚本传到服务器，再通过 SSH 隐藏输入密钥：
+
+```bash
+scp scripts/configure-aliyun-minimax-key.py alog-prod:/srv/tangtang-library/shared/configure-minimax-key.py
+ssh -tt alog-prod 'python3 /srv/tangtang-library/shared/configure-minimax-key.py'
+```
 
 使用 163 邮箱时，在网易邮箱设置中开启 SMTP 服务并生成客户端授权码。服务器先配置 `SMTP_HOST=smtp.163.com`、`SMTP_PORT=465`、`SMTP_USER`。发件人显示名写在 `SMTP_FROM` 中，例如 `SMTP_FROM="糖糖的共享书屋 <sender@163.com>"`；尖括号内的邮箱地址须与 `SMTP_USER` 相同。实际收件箱显示名还可能受邮箱服务商的账号昵称或收件人通讯录影响，配置后要向外部邮箱发信验收。网易账号的“姓名”设置影响该账号所有外发邮件；若需要专用显示名，应使用独立发件邮箱。账号持有人从自己的终端运行以下命令，在无回显提示下输入授权码；不要把授权码放进命令参数或聊天：
 
@@ -29,6 +35,12 @@ bash scripts/deploy-aliyun.sh alog-prod /srv/tangtang-library library.douwuyou.c
 ```
 
 脚本从当前 Git 提交打包上传，适用于先部署、再推送 GitHub。它会先备份已有共享书屋数据库，再构建、迁移并启动容器，确认内部 API 健康后更新 `current` 链接。更新前要先提交本地代码，因为未提交的文件不会进入发布包。
+
+首次使用管理后台时，在服务器容器内创建独立管理员账号。通过 SSH 终端交互输入账号与密码，不要把密码发到聊天中：
+
+```bash
+ssh -tt alog-prod 'cd /srv/tangtang-library/current && docker compose -p tangtang-library --env-file /srv/tangtang-library/shared/.env -f infra/aliyun/compose.yaml exec api npm run admin:create'
+```
 
 ## 接入现有 Nginx 和 HTTPS
 
@@ -53,4 +65,4 @@ curl --fail https://library.douwuyou.cn/health
 
 更新前脚本将数据库备份到服务器 `/srv/tangtang-library/shared/backups/`。应将备份另存到独立位置并每月做隔离恢复演练。应用可切回 `releases` 中的旧版，数据库结构变化需要用对应备份恢复，不能直接反向执行迁移。
 
-当前测试版没有图片上传、AI 识书和举报后台。只邀请获准的测试家庭，不收集不必要的儿童资料。公网开放前需补齐隐私政策和用户协议。
+当前测试版支持压缩封面、MiniMax 识书、运营数据与选项维护。只邀请获准的测试家庭，不收集不必要的儿童资料。公网扩大开放前需补齐隐私政策和用户协议。

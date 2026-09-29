@@ -63,8 +63,32 @@ export class LibraryController {
   @Get('books')
   async books(@Req() req: Request) { return this.library.books((await this.library.getFamily(cookie(req)))?.id); }
 
+  @Get('options')
+  options() { return this.library.options(); }
+
+  @Get('books/:id/cover')
+  async cover(@Req() req: Request, @Param('id') id: string, @Res() res: Response) {
+    const cover = await this.library.cover(id, (await this.library.getFamily(cookie(req)))?.id);
+    res.set('Content-Type', cover.mimeType).set('Cache-Control', 'private, max-age=300').send(cover.data);
+  }
+
+  @Post('books/recognize')
+  async recognizeBook(@Req() req: Request, @Body() body: Record<string, unknown>) {
+    await this.family(req);
+    return this.library.recognizeBookCover(body);
+  }
+
+  @Post('books/summarize')
+  async summarizeBook(@Req() req: Request, @Body() body: Record<string, unknown>) {
+    await this.family(req);
+    return this.library.summarizeBookDetails(body);
+  }
+
   @Post('books')
   async createBook(@Req() req: Request, @Body() body: Record<string, unknown>) { return this.library.createBook((await this.family(req)).id, body); }
+
+  @Patch('books/:id')
+  async editBook(@Req() req: Request, @Param('id') id: string, @Body() body: Record<string, unknown>) { return this.library.editBook((await this.family(req)).id, id, body); }
 
   @Patch('books/:id/status')
   async setBookStatus(@Req() req: Request, @Param('id') id: string, @Body() body: Record<string, unknown>) {

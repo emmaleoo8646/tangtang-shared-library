@@ -6,7 +6,7 @@
 
 - `apps/web`：连接真实 API 的响应式 Web 站点
 - `apps/mobile`：Flutter Android 历史原型
-- `apps/admin`：举报与运营处理后台
+- `apps/admin`：独立管理员后台，提供总览、用户业务统计及选项维护
 - `services/api`：NestJS API 与 Prisma 数据层
 - `packages/contracts`：前后端共享的数据约定
 - `infra/local`：本地 PostgreSQL
@@ -33,9 +33,14 @@ node --version
 Web 本地运行：
 
 1. 启动数据库：`docker compose -f infra/local/compose.yaml up -d`。
+   若本机 `5432` 已被占用，可设置 `TANGTANG_DB_PORT=5436` 启动，并将 `services/api/.env` 中数据库地址的端口改为 `5436`。
 2. 复制 `.env.example` 为 `services/api/.env`，运行 `cd services/api && npm ci && npm run db:generate && npx prisma migrate deploy && npm run start:dev`。
 3. 另开终端运行 `cd apps/web && npm ci && npm run dev`，打开 `http://localhost:5173`。Vite 将 `/api` 转发到本地 API。开发模式请求邮箱验证码时，页面会显示本地测试码；生产模式只通过配置好的 SMTP 发信服务发送。
 4. 两个不同的浏览器会话可分别注册家庭账号，发布图书并完成借还流程。正式部署见 [阿里云部署说明](infra/aliyun/README.md)。
+
+管理后台使用独立管理员账号。先在真实终端运行 `cd services/api && npm run admin:create`，输入账号和隐藏显示的密码；随后在另一个终端运行 `npm run admin:dev`，打开 `http://127.0.0.1:5174/admin/`。主站底部也有管理员入口。普通家庭账号无法登录管理后台。
+
+发布或编辑图书时可拍摄或上传 JPG、PNG、WebP 原图（本机读取不超过 20 MB）。原图只留在浏览器；裁剪区域宽高至少 600 像素，导出的 JPEG 最长边不超过 960 像素，只有不超过 600 KB 的处理结果保存在 PostgreSQL。裁剪完成后会自动调用 MiniMax 识别书名、作者与分类，并联网检索生成简介；若检索资料表明书并非面向儿童，会标记“非儿童读物”，简介首句也会提醒。家长仍需核对并可修改结果。MiniMax 需要在 `services/api/.env` 中设置 `AI_PROVIDER=minimax`、`AI_API_KEY` 和 `AI_MODEL=MiniMax-M3`；密钥仅由后端读取。可运行 `python3 scripts/configure-minimax-key.py` 在终端隐藏输入密钥。默认连接 MiniMax 中国站，国际站密钥可通过 `AI_BASE_URL=https://api.minimax.io/v1` 切换。未配置密钥时仍可上传封面并手动填写图书信息。
 
 以下步骤仅供历史 Android 工程调试：
 
