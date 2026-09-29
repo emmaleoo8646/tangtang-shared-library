@@ -53,7 +53,11 @@ if ssh "$deploy_target" "docker compose -p tangtang-library --env-file '$shared_
   ssh "$deploy_target" "umask 077; docker compose -p tangtang-library --env-file '$shared_env' -f '$compose_file' exec -T db pg_dump -U tangtang -Fc tangtang_library > '$backup_file'"
 fi
 
-ssh "$deploy_target" "docker compose -p tangtang-library --env-file '$shared_env' -f '$compose_file' up -d --build"
+for service in api web; do
+  echo "构建 $service 镜像"
+  ssh "$deploy_target" "docker compose -p tangtang-library --env-file '$shared_env' -f '$compose_file' build '$service'"
+done
+ssh "$deploy_target" "docker compose -p tangtang-library --env-file '$shared_env' -f '$compose_file' up -d --no-build"
 
 for attempt in {1..30}; do
   if ssh "$deploy_target" "docker compose -p tangtang-library --env-file '$shared_env' -f '$compose_file' exec -T web wget -qO- http://127.0.0.1/health" 2>/dev/null | grep -Fq '"service":"tangtang-api"' \
