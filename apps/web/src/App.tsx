@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Book, type Family, type Loan, type OptionLists } from "./api";
 import { CoverCropDialog } from "./CoverCropDialog";
+import { AiBusyNote } from "./components/AiBusyNote";
 
 type Page = "discover" | "detail" | "publish" | "tasks" | "library" | "profile";
 const statusText: Record<string, string> = {
@@ -112,10 +113,12 @@ function App() {
   const [pendingCover, setPendingCover] = useState<File | null>(null);
   const [editingBookId, setEditingBookId] = useState<string | null>(null);
   const [assistBusy, setAssistBusy] = useState<"recognize" | "summarize" | null>(null);
-  const [assistNotice, setAssistNotice] = useState("");
+  const [recognizeNotice, setRecognizeNotice] = useState("");
+  const [summarizeNotice, setSummarizeNotice] = useState("");
   const [summarySources, setSummarySources] = useState<{ title: string; url: string }[]>([]);
   const coverInput = useRef<HTMLInputElement>(null);
   const assistRequest = useRef(0);
+
   const [privacyConfirmed, setPrivacyConfirmed] = useState(false);
   const [places, setPlaces] = useState<Record<string, string>>({});
   const [childNickname, setChildNickname] = useState("");
@@ -191,7 +194,7 @@ function App() {
       setPublishCategory(current => currentOptionsFallback(current, options.categories, "category-picture"));
       setPublishAge(current => currentOptionsFallback(current, options.ages, "age-3-6"));
       setCondition(current => currentOptionsFallback(current, options.conditions, "condition-like-new"));
-      setPrivacyConfirmed(false); setAssistNotice(""); setSummarySources([]);
+      setPrivacyConfirmed(false); setRecognizeNotice(""); setSummarizeNotice(""); setSummarySources([]);
     }
     if (target === "profile" && family) { setProfilePhone(family.phone); setNickname(family.displayName); }
     setPage(target);
@@ -292,7 +295,7 @@ function App() {
       setCoverChanged(false);
       setCoverBytes(0);
       setEditingBookId(null);
-      setAssistNotice("");
+      setRecognizeNotice(""); setSummarizeNotice("");
       setSummarySources([]);
       setPrivacyConfirmed(false);
       setPage("library");
@@ -315,7 +318,7 @@ function App() {
     setPublishAge(book.ageOptionId || "age-3-6");
     setCondition(book.conditionOptionId);
     setCoverImage(book.coverUrl || ""); setCoverChanged(false); setCoverBytes(0);
-    setAssistNotice(""); setSummarySources([]); setPrivacyConfirmed(true);
+    setRecognizeNotice(""); setSummarizeNotice(""); setSummarySources([]); setPrivacyConfirmed(true);
     setPage("publish"); window.scrollTo(0, 0);
   }
 
@@ -323,7 +326,7 @@ function App() {
     if (!image) return;
     const requestId = ++assistRequest.current;
     setAssistBusy("recognize");
-    setAssistNotice("正在识别封面并检索图书资料，简介会自动填写…");
+    setRecognizeNotice("正在识别封面并检索图书资料，简介会自动填写…");
     try {
       const result = await api<{ title: string; author: string; category: string; summary: string; nonChildren?: boolean; sources: { title: string; url: string }[]; notice?: string }>("/books/recognize", "POST", { coverImage: image });
       if (requestId !== assistRequest.current) return;
@@ -334,8 +337,8 @@ function App() {
       if (result.summary) setSummary(result.summary);
       if (typeof result.nonChildren === "boolean") setNonChildren(result.nonChildren);
       setSummarySources(result.sources);
-      setAssistNotice(result.notice || "已自动识别封面并检索资料，请核对图书信息与简介。");
-    } catch (error) { if (requestId === assistRequest.current) { setAssistNotice("自动识别暂未完成，可手动填写，或点击按钮重试。"); flash((error as Error).message); } }
+      setRecognizeNotice(result.notice || "已自动识别封面并检索资料，请核对图书信息与简介。");
+    } catch (error) { if (requestId === assistRequest.current) { setRecognizeNotice("自动识别暂未完成，可手动填写，或点击按钮重试。"); flash((error as Error).message); } }
     finally { if (requestId === assistRequest.current) setAssistBusy(null); }
   }
 
@@ -343,14 +346,15 @@ function App() {
     if (!title.trim() || assistBusy) return;
     const requestId = ++assistRequest.current;
     setAssistBusy("summarize");
+    setSummarizeNotice("正在检索图书资料并撰写简介…");
     try {
       const result = await api<{ summary: string; nonChildren: boolean; sources: { title: string; url: string }[] }>("/books/summarize", "POST", { title, author });
       if (requestId !== assistRequest.current) return;
       setSummary(result.summary);
       setNonChildren(result.nonChildren);
       setSummarySources(result.sources);
-      setAssistNotice("MiniMax 已检索图书资料，请核对简介内容。");
-    } catch (error) { if (requestId === assistRequest.current) flash((error as Error).message); }
+      setSummarizeNotice("MiniMax 已检索图书资料，请核对简介内容。");
+    } catch (error) { if (requestId === assistRequest.current) { setSummarizeNotice("AI 检索简介暂未完成，可手动填写或调整书名/作者后重试。"); flash((error as Error).message); } }
     finally { if (requestId === assistRequest.current) setAssistBusy(null); }
   }
   async function apply() {
@@ -832,7 +836,11 @@ function App() {
                     </div>
                   </div>
                 </div>
-                {assistNotice && <p className="suggestion-note" role="status">{assistNotice}</p>}
+                <AiBusyNote
+                  text={recognizeNotice}
+                  busy={assistBusy === "recognize"}
+                  errorText="自动识别暂未完成，可手动填写，或点击按钮重试。"
+                />
                 <div className="field-grid">
                   <label>
                     <span className="field-label">书名 <b>*</b></span>
@@ -888,6 +896,11 @@ function App() {
                       onChange={(event) => setSummary(event.target.value)}
                       rows={4}
                       placeholder="说说这本书的故事、主题或孩子喜欢它的原因"
+                    />
+                    <AiBusyNote
+                      text={summarizeNotice}
+                      busy={assistBusy === "summarize"}
+                      errorText="AI 检索简介暂未完成，可手动填写或调整书名/作者后重试。"
                     />
                   </label>
                 </div>
