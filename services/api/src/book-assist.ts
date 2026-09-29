@@ -16,8 +16,8 @@ export async function decodeCover(value: unknown): Promise<CoverImage> {
   if (!valid) throw new BadRequestException('封面图片格式不正确');
   try {
     const metadata = await sharp(data, { limitInputPixels: 20_000_000 }).metadata();
-    if (metadata.format !== mimeType.slice(6) || !metadata.width || !metadata.height || metadata.width < 600 || metadata.height < 600 || metadata.width > 960 || metadata.height > 960) {
-      throw new BadRequestException('请裁剪封面，使宽高均为 600—960 像素');
+    if (metadata.format !== mimeType.slice(6) || !metadata.width || !metadata.height || metadata.width > 960 || metadata.height > 960) {
+      throw new BadRequestException('请裁剪封面，使图片最长边不超过 960 像素');
     }
   } catch (error) {
     if (error instanceof BadRequestException) throw error;

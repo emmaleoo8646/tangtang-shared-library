@@ -40,7 +40,7 @@ Web 本地运行：
 
 管理后台使用独立管理员账号。先在真实终端运行 `cd services/api && npm run admin:create`，输入账号和隐藏显示的密码；随后在另一个终端运行 `npm run admin:dev`，打开 `http://127.0.0.1:5174/admin/`。主站底部也有管理员入口。普通家庭账号无法登录管理后台。
 
-发布或编辑图书时可拍摄或上传 JPG、PNG、WebP 原图（本机读取不超过 20 MB）。原图只留在浏览器；裁剪区域宽高至少 600 像素，导出的 JPEG 最长边不超过 960 像素，只有不超过 600 KB 的处理结果保存在 PostgreSQL。裁剪完成后会自动调用 MiniMax 识别书名、作者与分类，并联网检索生成简介；若检索资料表明书并非面向儿童，会标记“非儿童读物”，简介首句也会提醒。家长仍需核对并可修改结果。MiniMax 需要在 `services/api/.env` 中设置 `AI_PROVIDER=minimax`、`AI_API_KEY` 和 `AI_MODEL=MiniMax-M3`；密钥仅由后端读取。可运行 `python3 scripts/configure-minimax-key.py` 在终端隐藏输入密钥。默认连接 MiniMax 中国站，国际站密钥可通过 `AI_BASE_URL=https://api.minimax.io/v1` 切换。未配置密钥时仍可上传封面并手动填写图书信息。
+发布或编辑图书时可拍摄或上传 JPG、PNG、WebP 原图（本机读取不超过 20 MB）。原图只留在浏览器；裁剪区域没有最小像素要求，导出的 JPEG 最长边不超过 960 像素，只有不超过 600 KB 的处理结果保存在 PostgreSQL。裁剪完成后会自动调用 MiniMax 识别书名、作者与分类，并联网检索生成简介；若检索资料表明书并非面向儿童，会标记“非儿童读物”，简介首句也会提醒。家长仍需核对并可修改结果。MiniMax 需要在 `services/api/.env` 中设置 `AI_PROVIDER=minimax`、`AI_API_KEY` 和 `AI_MODEL=MiniMax-M3`；密钥仅由后端读取。可运行 `python3 scripts/configure-minimax-key.py` 在终端隐藏输入密钥。默认连接 MiniMax 中国站，国际站密钥可通过 `AI_BASE_URL=https://api.minimax.io/v1` 切换。未配置密钥时仍可上传封面并手动填写图书信息。
 
 以下步骤仅供历史 Android 工程调试：
 

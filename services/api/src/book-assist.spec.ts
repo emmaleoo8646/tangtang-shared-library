@@ -20,11 +20,13 @@ describe('book cover and MiniMax assistance', () => {
     vi.unstubAllGlobals();
   });
 
-  it('accepts a processed cover and rejects forged, tiny, or oversized images', async () => {
+  it('accepts small processed covers and rejects forged or oversized images', async () => {
     expect((await decodeCover(validJpeg)).mimeType).toBe('image/jpeg');
     await expect(decodeCover('data:image/jpeg;base64,SGVsbG8=')).rejects.toThrow(BadRequestException);
     const tiny = await sharp({ create: { width: 1, height: 1, channels: 3, background: '#fff' } }).jpeg().toBuffer();
-    await expect(decodeCover(`data:image/jpeg;base64,${tiny.toString('base64')}`)).rejects.toThrow(BadRequestException);
+    await expect(decodeCover(`data:image/jpeg;base64,${tiny.toString('base64')}`)).resolves.toMatchObject({ mimeType: 'image/jpeg' });
+    const tooWide = await sharp({ create: { width: 961, height: 200, channels: 3, background: '#fff' } }).jpeg().toBuffer();
+    await expect(decodeCover(`data:image/jpeg;base64,${tooWide.toString('base64')}`)).rejects.toThrow(BadRequestException);
     await expect(decodeCover(`data:image/jpeg;base64,${Buffer.alloc(600_001, 255).toString('base64')}`)).rejects.toThrow(BadRequestException);
   });
 

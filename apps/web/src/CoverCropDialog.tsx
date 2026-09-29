@@ -48,14 +48,13 @@ export function CoverCropDialog({ file, onClose, onUse }: { file: File; onClose:
       const y = Math.round(selected.y * scaleY);
       const sourceWidth = Math.min(image.naturalWidth - x, Math.round(selected.width * scaleX));
       const sourceHeight = Math.min(image.naturalHeight - y, Math.round(selected.height * scaleY));
-      if (sourceWidth < 600 || sourceHeight < 600) throw new Error("裁剪区域宽和高都至少需要 600 像素，请选大一些");
+      if (sourceWidth < 1 || sourceHeight < 1) throw new Error("请选择有效的裁剪区域");
       const canvas = document.createElement("canvas");
       let blob: Blob | null = null;
-      for (const longest of [960, 900, 840, 780, 720, 660, 600]) {
+      for (const longest of [960, 900, 840, 780, 720, 660, 600, 540, 480, 420, 360, 300, 240, 180, 120]) {
         const ratio = Math.min(1, longest / Math.max(sourceWidth, sourceHeight));
-        canvas.width = Math.round(sourceWidth * ratio);
-        canvas.height = Math.round(sourceHeight * ratio);
-        if (canvas.width < 600 || canvas.height < 600) continue;
+        canvas.width = Math.max(1, Math.round(sourceWidth * ratio));
+        canvas.height = Math.max(1, Math.round(sourceHeight * ratio));
         const context = canvas.getContext("2d");
         if (!context) throw new Error("浏览器无法处理这张图片");
         context.fillStyle = "#fff";
