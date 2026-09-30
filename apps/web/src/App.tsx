@@ -123,6 +123,9 @@ function App() {
   const [places, setPlaces] = useState<Record<string, string>>({});
   const [childNickname, setChildNickname] = useState("");
   const [childAge, setChildAge] = useState("age-3-6");
+  const [closeAccountOpen, setCloseAccountOpen] = useState(false);
+  const [closeAccountName, setCloseAccountName] = useState("");
+  const [accountDangerOpen, setAccountDangerOpen] = useState(false);
 
   const selectedBook = books.find((book) => book.id === selectedId);
   const selectedLoan = loans.find(
@@ -411,13 +414,23 @@ function App() {
     if (!window.confirm("确定删除这份孩子档案吗？")) return;
     await run(() => api(`/me/children/${id}`, "DELETE"), "孩子档案已删除");
   }
-  async function closeAccount() {
-    if (
-      !window.confirm(
-        "确定注销家庭书屋吗？藏书将下架，孩子档案会删除，账号将退出。进行中的借阅需先完成。",
-      )
-    )
-      return;
+  function expectedCloseAccountName() {
+    return (nickname.trim() || family?.displayName || "").trim();
+  }
+  function openCloseAccountDialog() {
+    if (busy) return;
+    setCloseAccountName("");
+    setCloseAccountOpen(true);
+  }
+  function cancelCloseAccount() {
+    setCloseAccountOpen(false);
+    setCloseAccountName("");
+  }
+  async function confirmCloseAccount() {
+    if (!family) return;
+    if (closeAccountName.trim() !== expectedCloseAccountName()) return;
+    setCloseAccountOpen(false);
+    setCloseAccountName("");
     await run(async () => {
       await api("/me", "DELETE");
       setPage("discover");
@@ -1204,15 +1217,31 @@ function App() {
               </button>
               <div className="account-actions">
                 <button
-                  className="secondary-button"
+                  className="account-disclosure"
+                  type="button"
+                  aria-expanded={accountDangerOpen}
+                  aria-controls="account-danger-body"
                   disabled={busy}
-                  onClick={closeAccount}
+                  onClick={() => setAccountDangerOpen((value) => !value)}
                 >
-                  注销家庭书屋
+                  <span className="account-disclosure-chev" aria-hidden="true">▸</span>
+                  <span>注销家庭书屋</span>
                 </button>
-                <p>
-                  注销后书会下架，孩子档案和登录信息会删除；已完成的借阅记录保留匿名信息。
-                </p>
+                {accountDangerOpen && (
+                  <div id="account-danger-body" className="account-danger-body">
+                    <p>
+                      注销后书会下架，孩子档案和登录信息会删除；已完成的借阅记录保留匿名信息。
+                    </p>
+                    <button
+                      className="danger-button"
+                      type="button"
+                      disabled={busy}
+                      onClick={openCloseAccountDialog}
+                    >
+                      我已了解，继续注销
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </>
@@ -1243,6 +1272,66 @@ function App() {
       {toast && (
         <div className="toast" role="status">
           {toast}
+        </div>
+      )}
+      {closeAccountOpen && family && (
+        <div className="modal-backdrop" onClick={(event) => { if (event.target === event.currentTarget) cancelCloseAccount(); }}>
+          <div
+            className="login-dialog close-account-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="close-account-title"
+          >
+            <button
+              className="modal-close"
+              type="button"
+              aria-label="关闭"
+              onClick={cancelCloseAccount}
+            >
+              ×
+            </button>
+            <div className="dialog-icon" aria-hidden="true">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            </div>
+            <h2 id="close-account-title">确认注销家庭书屋？</h2>
+            <p>进行中的借阅需先完成。书屋会下架，孩子档案会删除，账号会退出；已完成的借阅记录保留匿名信息。</p>
+            <div className="confirm-form">
+              <label>
+                请输入书屋昵称 "<strong>{expectedCloseAccountName() || family.displayName}</strong>" 以确认
+                <input
+                  value={closeAccountName}
+                  onChange={(event) => setCloseAccountName(event.target.value)}
+                  placeholder={expectedCloseAccountName() || family.displayName}
+                  autoComplete="off"
+                />
+              </label>
+              <p className={"confirm-hint" + (closeAccountName.length > 0 && closeAccountName.trim() !== expectedCloseAccountName() ? " bad" : "")}>
+                {closeAccountName.length === 0
+                  ? "请完整输入当前书屋昵称"
+                  : closeAccountName.trim() === expectedCloseAccountName()
+                    ? "昵称匹配，可以继续"
+                    : "昵称不匹配，无法提交"}
+              </p>
+              <div className="confirm-dialog-actions">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={busy}
+                  onClick={cancelCloseAccount}
+                >
+                  取消
+                </button>
+                <button
+                  className="danger-button"
+                  type="button"
+                  disabled={busy || closeAccountName.trim() !== expectedCloseAccountName()}
+                  onClick={confirmCloseAccount}
+                >
+                  永久注销
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
       {loginOpen && (
