@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Req, Res, ForbiddenException } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, Res, ForbiddenException } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { LibraryService } from './library.service.js';
 
@@ -61,7 +61,28 @@ export class LibraryController {
   }
 
   @Get('books')
-  async books(@Req() req: Request) { return this.library.books((await this.library.getFamily(cookie(req)))?.id); }
+  async books(@Req() req: Request, @Query() query: Record<string, string>) { return this.library.books((await this.library.getFamily(cookie(req)))?.id, query); }
+
+  @Get('shops/:id')
+  shop(@Param('id') id: string) { return this.library.shop(id); }
+
+  @Get('shops/:id/books')
+  shopBooks(@Param('id') id: string, @Query() query: Record<string, string>) { return this.library.shopBooks(id, query); }
+
+  @Get('books/:id')
+  async book(@Req() req: Request, @Param('id') id: string) { return this.library.bookDetail(id, (await this.library.getFamily(cookie(req)))?.id); }
+
+  @Get('series')
+  async series(@Req() req: Request) { return this.library.bookSeries.findMany({ where: { ownerFamilyId: (await this.family(req)).id }, orderBy: { name: 'asc' } }); }
+
+  @Post('series')
+  async organizeSeries(@Req() req: Request, @Body() body: Record<string, unknown>) { return this.library.organizeSeries((await this.family(req)).id, body); }
+
+  @Post('loan-groups')
+  async applyGroup(@Req() req: Request, @Body() body: Record<string, unknown>) { return this.library.applyGroup((await this.family(req)).id, body); }
+
+  @Post('loan-groups/:id/action')
+  async actGroup(@Req() req: Request, @Param('id') id: string, @Body() body: Record<string, unknown>) { return this.library.actGroup((await this.family(req)).id, id, body); }
 
   @Get('options')
   options() { return this.library.options(); }

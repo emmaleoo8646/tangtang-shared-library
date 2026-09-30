@@ -1,9 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type Book, type Family, type Loan, type OptionLists } from "./api";
+import { useEffect, useRef, useState } from "react";
+import { api, allBooks, ApiError, type Book, type Family, type Loan, type OptionLists } from "./api";
+import { SelectBook, Browse, Shops, ChoiceSelect, CartPanel, GroupCard, groupLoans, useBorrowCart } from "./Borrowing";
+import { LibraryIcon, type LibraryIconName } from "./components/LibraryIcon";
+import { SharedBookCover } from "./components/SharedBookCover";
+import { loanPresentation } from "./loanPresentation";
 import { CoverCropDialog } from "./CoverCropDialog";
 import { AiBusyNote } from "./components/AiBusyNote";
 
-type Page = "discover" | "detail" | "publish" | "tasks" | "library" | "profile";
+type Page = "discover" | "shops" | "detail" | "publish" | "tasks" | "library" | "profile";
 const statusText: Record<string, string> = {
   REQUESTED: "等待书主同意",
   APPROVED: "待确认交接地点",
@@ -25,11 +29,11 @@ const active = new Set([
   "LENT",
   "RETURN_REQUESTED",
 ]);
-const nav: { page: Page; label: string; icon: string }[] = [
-  { page: "discover", label: "找书", icon: "⌕" },
-  { page: "publish", label: "发布", icon: "+" },
-  { page: "tasks", label: "消息·待办", icon: "◷" },
-  { page: "library", label: "我的书屋", icon: "▥" },
+const nav: { page: Page; label: string; icon: LibraryIconName }[] = [
+  { page: "discover", label: "找书", icon: "search" },
+  { page: "shops", label: "逛书屋", icon: "shop" },
+  { page: "tasks", label: "借阅", icon: "clock" },
+  { page: "library", label: "我的书屋", icon: "home" },
 ];
 
 function needsAttention(loan: Loan) {
@@ -43,30 +47,8 @@ function needsAttention(loan: Loan) {
   return loan.stage === "LENT" && loan.isOwner && loan.renewalRequested && !loan.renewed;
 }
 
-function loanStep(stage: string) {
-  if (stage === "REQUESTED") return 0;
-  if (stage === "APPROVED" || stage === "HANDOFF_AGREED") return 1;
-  if (stage === "LENT") return 2;
-  return 3;
-}
-
-function dateLabel(value: string) {
-  return new Date(value).toLocaleDateString("zh-CN");
-}
-
 function BookCover({ book, large = false }: { book: Book; large?: boolean }) {
-  if (book.coverUrl) return <img className={`book-cover-image ${large ? "large" : ""}`} src={book.coverUrl} alt={`${book.title}封面`} />;
-  return (
-    <div
-      className={`book-cover ${book.tone} ${large ? "large" : ""}`}
-      aria-hidden="true"
-    >
-      <span className="cover-kicker">糖糖共享书屋</span>
-      <span className="cover-mark">✦</span>
-      <strong>{book.title}</strong>
-      <span className="cover-bottom">阅读，让故事继续</span>
-    </div>
-  );
+  return <div className={`shared-cover-wrap ${large ? "large" : ""}`}><SharedBookCover book={book} /></div>;
 }
 
 function App() {
@@ -77,11 +59,16 @@ function App() {
   const [family, setFamily] = useState<Family | null>(null);
   const [options, setOptions] = useState<OptionLists>({ categories: [], ages: [], conditions: [] });
   const [selectedId, setSelectedId] = useState("");
-  const [query, setQuery] = useState("");
-  const [category, setCategory] = useState("全部");
-  const [age, setAge] = useState("全部");
-  const [onlyAvailable, setOnlyAvailable] = useState(false);
-  const [taskTab, setTaskTab] = useState<"todo" | "progress" | "messages">("todo");
+  const [authReadyLoaded, setAuthReadyLoaded] = useState(false);
+  const [currentShop, setCurrentShop] = useState(new URLSearchParams(location.search).get("shop") || "");
+  const [browseKey, setBrowseKey] = useState(0);
+  const [ownedSeries, setOwnedSeries] = useState<{id:string;name:string}[]>([]);
+  const [publishSeries, setPublishSeries] = useState("");
+  const [seriesOrder, setSeriesOrder] = useState("");
+  const [organizeIds, setOrganizeIds] = useState<string[]>([]);
+  const [seriesName, setSeriesName] = useState("");
+  const [seriesSummary, setSeriesSummary] = useState("");
+  const [taskTab, setTaskTab] = useState<"all" | "progress" | "done">("all");
   const [libraryTab, setLibraryTab] = useState<"my" | "borrowed" | "lent">(
     "my",
   );
@@ -120,7 +107,6 @@ function App() {
   const assistRequest = useRef(0);
 
   const [privacyConfirmed, setPrivacyConfirmed] = useState(false);
-  const [places, setPlaces] = useState<Record<string, string>>({});
   const [childNickname, setChildNickname] = useState("");
   const [childAge, setChildAge] = useState("age-3-6");
   const [closeAccountOpen, setCloseAccountOpen] = useState(false);
@@ -133,45 +119,34 @@ function App() {
   );
   const activeLoans = loans.filter((loan) => active.has(loan.stage));
   const todoLoans = activeLoans.filter(needsAttention);
-  const pendingCount = todoLoans.length;
+  const pendingCount = groupLoans(todoLoans).length;
   const pendingBadge = pendingCount > 99 ? "99+" : pendingCount;
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   const phoneValid = /^(?:1[3-9]\d{9}|\+[1-9]\d{7,14})$/.test(registrationPhone.replace(/[\s()-]/g, ""));
   const authReady = authMode === "login"
     ? Boolean(account.trim() && password)
     : emailValid && code.length === 6 && password.length >= 10 && password === confirmPassword && (authMode === "reset" || (/^[a-zA-Z0-9_]{4,24}$/.test(account) && phoneValid));
-  const results = useMemo(
-    () =>
-      books.filter((book) => {
-        const term = query.trim().toLowerCase();
-        return (
-          (!term ||
-            `${book.title} ${book.author}`.toLowerCase().includes(term)) &&
-          (category === "全部" || book.category === category) &&
-          (age === "全部" || book.age === age) &&
-          (!onlyAvailable || book.available)
-        );
-      }),
-    [books, query, category, age, onlyAvailable],
-  );
-
   function flash(message: string) {
     setToast(message);
     window.setTimeout(() => setToast(""), 4000);
   }
   async function refresh() {
-    const [list, currentOptions] = await Promise.all([api<Book[]>("/books"), api<OptionLists>("/options")]);
+    const [list, currentOptions] = await Promise.all([allBooks(), api<OptionLists>("/options")]);
     setBooks(list);
     setOptions(currentOptions);
     try {
       const me = await api<Family>("/me");
       setFamily(me);
       setLoans(await api<Loan[]>("/loans"));
-    } catch {
+      setOwnedSeries(await api<{id:string;name:string}[]>("/series"));
+    } catch (error) {
+      if (!(error instanceof ApiError) || ![401,403].includes(error.status)) throw error;
       setFamily(null);
-      setLoans([]);
+      setLoans([]); setOwnedSeries([]);
     }
+    setAuthReadyLoaded(true);
   }
+  const cart = useBorrowCart(family, authReadyLoaded, books, refresh, () => { switchAuthMode("login"); setLoginOpen(true); }, flash);
   useEffect(() => {
     void refresh().catch((error) => flash((error as Error).message));
   }, []);
@@ -183,16 +158,18 @@ function App() {
     return () => window.clearInterval(timer);
   }, [family?.id]);
   function go(target: Page) {
-    if (target !== "discover" && target !== "detail" && !family) {
+    if (target !== "discover" && target !== "shops" && target !== "detail" && !family) {
       setRequestedPage(target);
       switchAuthMode("login");
       setLoginOpen(true);
       return;
     }
+    if (target === "discover") { history.pushState(null,"","/"); setCurrentShop(""); setBrowseKey(key=>key+1); }
     if (target === "publish") {
       assistRequest.current++;
       setAssistBusy(null);
       setEditingBookId(null);
+      setPublishSeries(""); setSeriesOrder("");
       setTitle(""); setAuthor(""); setSummary(""); setNonChildren(false); setCoverImage(""); setCoverChanged(false); setCoverBytes(0);
       setPublishCategory(current => currentOptionsFallback(current, options.categories, "category-picture"));
       setPublishAge(current => currentOptionsFallback(current, options.ages, "age-3-6"));
@@ -270,6 +247,7 @@ function App() {
     await run(async () => {
       await api("/auth/logout", "POST");
       setNickname("");
+      setOrganizeIds([]); setSeriesName(""); setSeriesSummary("");
       setPage("discover");
     }, "已退出登录");
   }
@@ -281,6 +259,8 @@ function App() {
     await run(async () => {
       await api(editingBookId ? `/books/${editingBookId}` : "/books", editingBookId ? "PATCH" : "POST", {
         title,
+        seriesId: publishSeries || null,
+        seriesOrder: seriesOrder || null,
         author,
         categoryOptionId: publishCategory,
         ageOptionId: publishAge,
@@ -316,6 +296,7 @@ function App() {
     assistRequest.current++;
     setAssistBusy(null);
     setEditingBookId(book.id);
+    setPublishSeries(book.series?.id || ""); setSeriesOrder(book.seriesOrder?.toString() || "");
     setTitle(book.title); setAuthor(book.author); setSummary(book.summary); setNonChildren(book.nonChildren);
     setPublishCategory(book.categoryOptionId || "category-other");
     setPublishAge(book.ageOptionId || "age-3-6");
@@ -359,30 +340,6 @@ function App() {
       setSummarizeNotice("MiniMax 已检索图书资料，请核对简介内容。");
     } catch (error) { if (requestId === assistRequest.current) { setSummarizeNotice("AI 检索简介暂未完成，可手动填写或调整书名/作者后重试。"); flash((error as Error).message); } }
     finally { if (requestId === assistRequest.current) setAssistBusy(null); }
-  }
-  async function apply() {
-    if (!selectedBook) return;
-    if (!family) {
-      setRequestedPage(null);
-      switchAuthMode("login");
-      setLoginOpen(true);
-      return;
-    }
-    await run(async () => {
-      await api(`/books/${selectedBook.id}/apply`, "POST");
-      setPage("tasks");
-      setTaskTab("progress");
-    }, "申请已提交，等待书主审批");
-  }
-  async function act(
-    loan: Loan,
-    action: string,
-    extra: Record<string, unknown> = {},
-  ) {
-    await run(
-      () => api(`/loans/${loan.id}/action`, "POST", { action, ...extra }),
-      "借阅状态已更新",
-    );
   }
   async function setShelf(book: Book) {
     await run(
@@ -437,153 +394,29 @@ function App() {
     }, "账号已注销");
   }
 
-  function renderLoanCard(loan: Loan) {
-    const book = books.find((item) => item.id === loan.bookId);
-    if (!book) return null;
-    const previousPlace = loans.find((item) => item.id !== loan.id && item.isOwner && item.place)?.place ?? "";
-    const place = places[loan.id] ?? (loan.place || previousPlace);
-    const step = loanStep(loan.stage);
-    const remainingDays = loan.dueAt
-      ? Math.ceil((new Date(loan.dueAt).getTime() - Date.now()) / 86_400_000)
-      : null;
-    const statusLabel = loan.isOwner && loan.stage === "REQUESTED"
-      ? "待你同意"
-      : loan.isOwner && loan.stage === "RETURN_REQUESTED"
-        ? "待你确认收回"
-        : statusText[loan.stage];
-    let nextStep = "";
-    if (loan.stage === "REQUESTED") nextStep = loan.isOwner ? "请确认公共交接地点并同意借出" : "等待书主处理申请";
-    else if (loan.stage === "APPROVED") nextStep = loan.isOwner ? "请确认公共交接地点" : "等待书主确认交接地点";
-    else if (loan.stage === "HANDOFF_AGREED") nextStep = loan.isOwner
-      ? loan.borrowerLoanConfirmed ? "请完成这笔旧订单的交接确认" : "等待借书家庭取书并确认"
-      : loan.borrowerLoanConfirmed ? "等待书主完成这笔旧订单的交接确认" : "拿到实体书后，请确认收书";
-    else if (loan.stage === "RETURN_REQUESTED") nextStep = loan.isOwner
-      ? loan.ownerReturnConfirmed ? "请完成这笔旧订单的归还记录" : "收到实体书后，请确认收回"
-      : "等待书主确认收回实体书";
-    else nextStep = loan.isOwner
-      ? loan.renewalRequested && !loan.renewed ? "借书家庭申请续借，请处理" : "借阅中；收到实体书后确认收回"
-      : "请在到期前将书交还书主";
-    return (
-      <article className="order-card" key={loan.id}>
-        <div className="order-head">
-          <BookCover book={book} />
-          <div>
-            <span className="status available">{statusLabel}</span>
-            <h2>{loan.bookTitle}</h2>
-            <p>
-              {loan.isOwner
-                ? `借书家庭：${loan.borrower}`
-                : `书主家庭：${loan.owner}`}
-            </p>
-          </div>
-        </div>
-        <ol className="loan-steps" aria-label="借阅进度">
-          {["申请", "取书", "阅读", "归还"].map((label, index) => (
-            <li key={label} className={index < step ? "done" : index === step ? "current" : ""}>
-              <span aria-hidden="true">{index < step ? "✓" : index + 1}</span>
-              <strong>{label}</strong>
-            </li>
-          ))}
-        </ol>
-        <div className={`next-step ${needsAttention(loan) ? "needs-attention" : ""}`}>
-          <small>{needsAttention(loan) ? "轮到你操作" : "当前进展"}</small>
-          <strong>{nextStep}</strong>
-        </div>
-        {loan.contactPhone !== null && <div className="loan-contact"><strong>{loan.isOwner ? "借书家庭电话" : "书主家庭电话"}</strong><span>{loan.contactPhone || "暂未提供"}</span><small>仅供本次借阅交接与订单异常联系</small></div>}
-        {loan.stage === "REQUESTED" && (
-          <>
-            <p className="order-tip">
-              申请提交后 48 小时内处理；超时会自动结束。
-            </p>
-            {loan.isOwner && (
-              <div className="place-box">
-                <label>
-                  <strong>公共交接地点</strong>
-                  <input
-                    value={place}
-                    maxLength={120}
-                    onChange={(event) => setPlaces((current) => ({ ...current, [loan.id]: event.target.value }))}
-                    placeholder="例如：社区图书馆门口"
-                  />
-                </label>
-                <small>仅借阅双方可见。请勿填写家庭住址或联系方式。</small>
-              </div>
-            )}
-            <div className="action-row">
-              {loan.isOwner ? (
-                <>
-                  <button className="primary-button" disabled={busy || !place.trim()} onClick={() => act(loan, "approve", { place })}>确认地点并同意借出</button>
-                  <button className="secondary-button" disabled={busy} onClick={() => act(loan, "decline")}>拒绝申请</button>
-                </>
-              ) : (
-                <button className="secondary-button" disabled={busy} onClick={() => act(loan, "cancel")}>取消申请</button>
-              )}
-            </div>
-          </>
-        )}
-        {loan.stage === "APPROVED" && (
-          <>
-            <div className="place-box">
-              <label>
-                <strong>公共交接地点</strong>
-                <input
-                  value={place}
-                  maxLength={120}
-                  disabled={!loan.isOwner}
-                  onChange={(event) => setPlaces((current) => ({ ...current, [loan.id]: event.target.value }))}
-                  placeholder="例如：社区图书馆门口"
-                />
-              </label>
-              <small>仅借阅双方可见。请勿填写家庭住址或联系方式。</small>
-            </div>
-            {loan.isOwner && <div className="action-row"><button className="primary-button" disabled={busy || !place.trim()} onClick={() => act(loan, "set-place", { place })}>确认交接地点</button></div>}
-          </>
-        )}
-        {loan.stage === "HANDOFF_AGREED" && (
-          <>
-            <div className="place-box">
-              <strong>交接地点：{loan.place}</strong>
-              <small>借书家庭收到实体书并确认后，开始 14 天借期。</small>
-            </div>
-            <div className="action-row">
-              {!loan.isOwner && !loan.borrowerLoanConfirmed && <button className="primary-button" disabled={busy} onClick={() => act(loan, "confirm-lend")}>已拿到书</button>}
-              {loan.isOwner && loan.borrowerLoanConfirmed && !loan.ownerLoanConfirmed && <button className="primary-button" disabled={busy} onClick={() => act(loan, "confirm-lend")}>完成旧订单交接</button>}
-            </div>
-            {loan.isOwner && !loan.ownerLoanConfirmed && !loan.borrowerLoanConfirmed && (
-              <details className="loan-more">
-                <summary>修改交接地点</summary>
-                <div className="place-box"><label><strong>新的公共交接地点</strong><input value={place} maxLength={120} onChange={(event) => setPlaces((current) => ({ ...current, [loan.id]: event.target.value }))} /></label></div>
-                <button className="secondary-button" disabled={busy || !place.trim() || place.trim() === loan.place} onClick={() => act(loan, "set-place", { place })}>保存新地点</button>
-              </details>
-            )}
-          </>
-        )}
-        {["LENT", "RETURN_REQUESTED"].includes(loan.stage) && (
-          <>
-            <div className="place-box">
-              <strong>应归还日期：{loan.dueAt ? dateLabel(loan.dueAt) : "待确认"}</strong>
-              {remainingDays !== null && <small>{remainingDays > 0 ? `还剩 ${remainingDays} 天` : remainingDays === 0 ? "今天到期" : `已逾期 ${-remainingDays} 天`}</small>}
-              <small>线下把实体书交还书主；书主收到后确认。</small>
-            </div>
-            {loan.renewalRequested && !loan.renewed && <p className="order-tip">{loan.isOwner ? "借书家庭申请续借 14 天。" : "续借申请待书主处理。"}</p>}
-            <div className="action-row">
-              {loan.isOwner && <button className="primary-button" disabled={busy} onClick={() => act(loan, "confirm-return")}>{loan.ownerReturnConfirmed ? "完成旧订单归还" : "已收回书"}</button>}
-              {loan.isOwner && loan.stage === "LENT" && loan.renewalRequested && !loan.renewed && <button className="secondary-button" disabled={busy} onClick={() => act(loan, "approve-renew")}>同意续借 14 天</button>}
-            </div>
-            {!loan.isOwner && loan.stage === "LENT" && (
-              <details className="loan-more">
-                <summary>归还与续借</summary>
-                <div className="action-row">
-                  <button className="secondary-button" disabled={busy} onClick={() => act(loan, "request-return")}>已送还，提醒书主</button>
-                  {!loan.renewed && !loan.renewalRequested && <button className="secondary-button" disabled={busy} onClick={() => act(loan, "request-renew")}>申请续借</button>}
-                </div>
-              </details>
-            )}
-          </>
-        )}
-      </article>
-    );
+  function continueShop(id: string) {
+    history.pushState(null, "", `/?shop=${encodeURIComponent(id)}`);
+    sessionStorage.removeItem('tt-browse');
+    setCurrentShop(id); setPage('discover'); setBrowseKey(key => key + 1); cart.setActiveShop(id); window.scrollTo(0,0);
   }
+  async function groupAction(id: string, action: string, extra: Record<string,unknown> = {}) {
+    if (busy) return;
+    setBusy(true);
+    try { const legacy = loans.some(l=>l.id === id && !l.groupId); await api(`/${legacy ? 'loans' : 'loan-groups'}/${id}/action`, 'POST', {action,...extra}); await refresh(); flash('借阅进展已更新'); }
+    catch(error) { flash((error as Error).message); throw error; }
+    finally {setBusy(false);}
+  }
+  function renderRecords(rows: Loan[]) {
+    // Include the complete group so a mixed batch never hides its rejected or returned books.
+    return groupLoans(rows).map(group => <GroupCard books={books} familyId={family?.id || ""}
+      key={group[0].groupId || group[0].id}
+      loans={group[0].groupId ? loans.filter(l=>l.groupId===group[0].groupId) : group}
+      busy={busy} defaultPlace={loans.find(l => l.isOwner && l.place)?.place || ""} act={groupAction} />);
+  }
+  async function organize() {
+    await run(async () => { await api('/series', 'POST', {name:seriesName, summary:seriesSummary, bookIds:organizeIds}); setOrganizeIds([]); setSeriesName(''); setSeriesSummary(''); }, '已整理为系列');
+  }
+
 
   return (
     <div className="site-shell">
@@ -604,11 +437,11 @@ function App() {
             {nav.map((item) => (
               <button
                 key={item.page}
-                className={page === item.page ? "active" : ""}
+                className={(item.page === "shops" ? page === "shops" || (page === "discover" && !!currentShop) : item.page === "discover" ? page === "discover" && !currentShop : item.page === "library" ? ["library","publish","profile"].includes(page) : page === item.page) ? "active" : ""}
                 onClick={() => go(item.page)}
                 aria-label={item.page === "tasks" && pendingCount > 0 ? `${item.label}，${pendingCount} 条待办` : undefined}
               >
-                <span aria-hidden="true">{item.icon}</span>
+                <LibraryIcon name={item.icon} />
                 {item.label}
                 {item.page === "tasks" && pendingCount > 0 && (
                   <span className="nav-badge" aria-hidden="true">{pendingBadge}</span>
@@ -631,125 +464,9 @@ function App() {
           </button>
         </div>
       </header>
-      <main className="main-content">
-        {page === "discover" && (
-          <>
-            <section className="discover-top">
-              <div>
-                <p className="eyebrow">分享闲置童书 · 免费借阅</p>
-                <h1>今天，想读什么故事？</h1>
-                <p className="lead">
-                  看看其他家庭愿意分享的好书。由家长申请，线下在公共地点交接。
-                </p>
-              </div>
-              <img src="/brand.png" alt="两个孩子在共享书屋前传递一本书" />
-            </section>
-            <section className="search-panel" aria-label="找书筛选">
-              <div className="search-field">
-                <span aria-hidden="true">⌕</span>
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="搜索书名或作者"
-                  aria-label="搜索书名或作者"
-                />
-                {query && (
-                  <button onClick={() => setQuery("")} aria-label="清除搜索">
-                    ×
-                  </button>
-                )}
-              </div>
-              <div className="filter-row">
-                <span>筛选</span>
-                <select
-                  value={category}
-                  onChange={(event) => setCategory(event.target.value)}
-                  aria-label="图书分类"
-                >
-                  <option>全部</option>
-                  {options.categories.map(option => <option key={option.id}>{option.label}</option>)}
-                </select>
-                <select
-                  value={age}
-                  onChange={(event) => setAge(event.target.value)}
-                  aria-label="适读年龄"
-                >
-                  <option>全部</option>
-                  {options.ages.map(option => <option key={option.id}>{option.label}</option>)}
-                </select>
-                <label className="check-row">
-                  <input
-                    type="checkbox"
-                    checked={onlyAvailable}
-                    onChange={(event) => setOnlyAvailable(event.target.checked)}
-                  />
-                  只看可借
-                </label>
-              </div>
-            </section>
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">在书屋里发现</p>
-                <h2>找到 {results.length} 本书</h2>
-              </div>
-              <span>点击书卡查看详情</span>
-            </div>
-            {results.length ? (
-              <div className="book-grid">
-                {results.map((book) => (
-                  <button
-                    className="book-card"
-                    key={book.id}
-                    onClick={() => showBook(book.id)}
-                  >
-                    <BookCover book={book} />
-                    <div className="book-card-text">
-                      <span
-                        className={`status ${book.available ? "available" : "unavailable"}`}
-                      >
-                        {book.available
-                          ? "可借"
-                          : book.offShelf
-                            ? "已下架"
-                            : "借出中"}
-                      </span>
-                      {book.nonChildren && <span className="non-child-badge">非儿童读物</span>}
-                      <h3>{book.title}</h3>
-                      <p>
-                        {book.category} · {book.age}
-                      </p>
-                      <div className="book-owner">
-                        来自 {book.owner}
-                        <span>›</span>
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="empty-state">
-                <h3>暂时没有找到图书</h3>
-                <p>试试换个书名或筛选条件。</p>
-                <button
-                  className="secondary-button"
-                  onClick={() => {
-                    setQuery("");
-                    setCategory("全部");
-                    setAge("全部");
-                    setOnlyAvailable(false);
-                  }}
-                >
-                  清除筛选
-                </button>
-              </div>
-            )}
-            <div className="privacy-note">
-              <span>
-                公开页面只显示书屋昵称；孩子资料、邮箱与交接地点不会公开。
-              </span>
-            </div>
-          </>
-        )}
+      <main className={`main-content ${cart.carts.length && ["discover","shops","detail"].includes(page) ? "with-borrow-cart" : ""}`}>
+        {page === "discover" && <Browse key={browseKey} books={books} options={options} cart={cart} onShopChange={setCurrentShop} />}
+        {page === "shops" && <Shops books={books} enterShop={continueShop} />}
         {page === "detail" && selectedBook && (
           <>
             <button className="back-link" onClick={() => go(previousPage)}>
@@ -771,12 +488,14 @@ function App() {
                   <span>{selectedBook.category}</span>
                   <span>{selectedBook.age}</span>
                   <span>{selectedBook.condition}</span>
+                  {selectedBook.series && <span>{selectedBook.series.name}{selectedBook.seriesOrder ? ` · 第${selectedBook.seriesOrder}册` : ""}</span>}
                   {selectedBook.nonChildren && <span className="non-child-badge">非儿童读物</span>}
                 </div>
                 <section className="detail-summary">
                   <h2>关于这本书</h2>
                   <p>{selectedBook.summary || "书主暂未填写简介。"}</p>
                 </section>
+                <button className="text-button" onClick={() => continueShop(selectedBook.shopId)}>进入{selectedBook.owner} ›</button>
                 <div className="detail-safety">
                   书主同意时确认公共交接地点。借书家庭收到书后，开始 14 天借期。
                 </div>
@@ -807,13 +526,7 @@ function App() {
                     查看这笔借阅
                   </button>
                 ) : (
-                  <button
-                    className="primary-button"
-                    disabled={!selectedBook.available || busy}
-                    onClick={apply}
-                  >
-                    {selectedBook.available ? "申请免费借阅" : "暂不可借"}
-                  </button>
+                  <SelectBook book={selectedBook} cart={cart} />
                 )}
               </div>
             </div>
@@ -874,33 +587,18 @@ function App() {
                   </label>
                   <label>
                     分类
-                    <select
-                      value={publishCategory}
-                      onChange={(event) =>
-                        setPublishCategory(event.target.value)
-                      }
-                    >
-                      {options.categories.filter(option => option.active || option.id === publishCategory).map(option => <option key={option.id} value={option.id}>{option.label}{option.active ? "" : "（已停用）"}</option>)}
-                    </select>
+                    <ChoiceSelect label="图书分类" value={publishCategory} onChange={setPublishCategory} options={options.categories.filter(o=>o.active || o.id === publishCategory).map(o=>({value:o.id,label:o.label+(o.active ? "" : "（已停用）")}))}/>
                   </label>
                   <label>
                     适读年龄
-                    <select
-                      value={publishAge}
-                      onChange={(event) => setPublishAge(event.target.value)}
-                    >
-                      {options.ages.filter(option => option.active || option.id === publishAge).map(option => <option key={option.id} value={option.id}>{option.label}{option.active ? "" : "（已停用）"}</option>)}
-                    </select>
+                    <ChoiceSelect label="适读年龄" value={publishAge} onChange={setPublishAge} options={options.ages.filter(o=>o.active || o.id === publishAge).map(o=>({value:o.id,label:o.label+(o.active ? "" : "（已停用）")}))}/>
                   </label>
                   <label>
                     新旧程度
-                    <select
-                      value={condition}
-                      onChange={(event) => setCondition(event.target.value)}
-                    >
-                      {options.conditions.filter(option => option.active || option.id === condition).map(option => <option key={option.id} value={option.id}>{option.label}{option.active ? "" : "（已停用）"}</option>)}
-                    </select>
+                    <ChoiceSelect label="新旧程度" value={condition} onChange={setCondition} options={options.conditions.filter(o=>o.active || o.id === condition).map(o=>({value:o.id,label:o.label+(o.active ? "" : "（已停用）")}))}/>
                   </label>
+                  <label>所属系列（选填）<ChoiceSelect label="所属系列" value={publishSeries} onChange={setPublishSeries} options={[{value:"",label:"单本图书"},...ownedSeries.map(item=>({value:item.id,label:item.name}))]}/></label>
+                  <label>系列册序（选填）<input type="number" min="1" max="10000" disabled={!publishSeries} value={seriesOrder} onChange={e=>setSeriesOrder(e.target.value)} placeholder="例如 1" /></label>
                   <label className="full-field">
                     <span className="summary-label"><span>简单介绍</span><button type="button" disabled={!title.trim() || !!assistBusy} onClick={() => void generateSummary()}>{assistBusy === "summarize" ? "检索中…" : "✦ AI 检索并生成"}</button></span>
                     <textarea
@@ -949,97 +647,22 @@ function App() {
             </div>
           </>
         )}
-        {page === "tasks" && (
-          <>
-            <div className="page-title">
-              <p className="eyebrow">每一步都有回应</p>
-              <h1>消息与待办</h1>
-              <p>申请、取书、阅读、归还，双方都能看到现在进行到哪一步。</p>
-            </div>
-            <div className="tabs">
-              <button
-                className={taskTab === "todo" ? "selected" : ""}
-                onClick={() => setTaskTab("todo")}
-              >
-                待办 {pendingCount > 0 && <em>{pendingCount}</em>}
-              </button>
-              <button
-                className={taskTab === "progress" ? "selected" : ""}
-                onClick={() => setTaskTab("progress")}
-              >
-                进行中 {activeLoans.length > 0 && <em>{activeLoans.length}</em>}
-              </button>
-              <button
-                className={taskTab === "messages" ? "selected" : ""}
-                onClick={() => setTaskTab("messages")}
-              >
-                借阅动态
-              </button>
-            </div>
-            {taskTab === "todo" ? (
-              todoLoans.length ? (
-                <div className="orders-list">
-                  {todoLoans.map(renderLoanCard)}
-                </div>
-              ) : (
-                <div className="empty-state">
-                  <h3>目前没有需要你处理的借阅</h3>
-                  <p>{activeLoans.length ? "进行中的借阅可以在旁边查看。" : "从找书页申请一本书，进展会显示在这里。"}</p>
-                  <button
-                    className="secondary-button"
-                    onClick={() => activeLoans.length ? setTaskTab("progress") : go("discover")}
-                  >
-                    {activeLoans.length ? "查看进行中" : "去找书"}
-                  </button>
-                </div>
-              )
-            ) : taskTab === "progress" ? (
-              activeLoans.length ? (
-                <div className="orders-list">{activeLoans.map(renderLoanCard)}</div>
-              ) : (
-                <div className="empty-state">
-                  <h3>目前没有进行中的借阅</h3>
-                  <p>从找书页申请一本书，进展会显示在这里。</p>
-                  <button className="secondary-button" onClick={() => go("discover")}>去找书</button>
-                </div>
-              )
-            ) : (
-              <div className="messages-list">
-                {loans.length ? (
-                  loans.map((loan) => (
-                    <article key={loan.id}>
-                      <span className="message-icon">▥</span>
-                      <div>
-                        <h3>
-                          {loan.bookTitle} · {statusText[loan.stage]}
-                        </h3>
-                        <p>
-                          {loan.isOwner
-                            ? `借书家庭：${loan.borrower}`
-                            : `书主家庭：${loan.owner}`}
-                        </p>
-                        <small>
-                          申请 {new Date(loan.requestedAt).toLocaleString("zh-CN")}
-                          {loan.lentAt && <> · 取书 {new Date(loan.lentAt).toLocaleString("zh-CN")}</>}
-                          {loan.returnedAt && <> · 归还 {new Date(loan.returnedAt).toLocaleString("zh-CN")}</>}
-                        </small>
-                      </div>
-                    </article>
-                  ))
-                ) : (
-                  <div className="empty-state">
-                    <h3>暂无借阅动态</h3>
-                  </div>
-                )}
-              </div>
-            )}
-          </>
-        )}
+        {page === "tasks" && <>
+          <div className="page-title"><p className="eyebrow">每一步都有回应</p><h1>我的借阅</h1><p>和一家书屋的几本书，放在一起看。</p></div>
+          <div className="tabs borrowing-tabs">{([{value:"all",label:"全部"},{value:"progress",label:"进行中"},{value:"done",label:"已结束"}] as const).map(t=>{
+            const count=groupLoans(loans).filter(g=>t.value==="all" || (t.value==="done" ? loanPresentation(g).done : !loanPresentation(g).done)).length;
+            return <button key={t.value} className={taskTab===t.value?"selected":""} onClick={()=>setTaskTab(t.value)}>{t.label}<span className="tab-count">{count}</span></button>;
+          })}</div>
+          <div className="loan-list">{(() => {
+            const rows=groupLoans(loans).filter(g=>taskTab==="all" || (taskTab==="done" ? loanPresentation(g).done : !loanPresentation(g).done)).flat();
+            return rows.length ? renderRecords(rows) : <div className="empty-state"><LibraryIcon name="book"/><h3>{taskTab==="done" ? "还没有结束的借阅" : "目前没有进行中的借阅"}</h3><p>选几本喜欢的书，借阅进展会显示在这里。</p><button className="secondary-button" onClick={()=>go("discover")}>去找书</button></div>;
+          })()}</div>
+        </>}
         {page === "library" && (
           <>
             <div className="page-title">
               <p className="eyebrow">一家一座小书屋</p>
-              <h1>我的书屋</h1>
+              <div className="my-library-title"><h1>我的书屋</h1><button className="primary-button" onClick={()=>go("publish")}><LibraryIcon name="plus"/> 发布图书</button></div>
               <p>管理分享的书和借阅记录。</p>
             </div>
             <section className="family-card">
@@ -1080,22 +703,26 @@ function App() {
               <>
                 <div className="library-heading">
                   <h2>{books.filter((book) => book.mine).length} 本书</h2>
-                  <button className="text-button" onClick={() => go("publish")}>
-                    ＋ 发布新书
-                  </button>
                 </div>
+                {books.some(book=>book.mine) && <div className="series-organizer">
+                  <h3>多选藏书，整理为系列</h3>
+                  <p>选中几本相关的书，整理成系列，方便其他家庭一起借阅。</p>
+                  {organizeIds.length > 0 && <><label>系列名称<input value={seriesName} maxLength={100} onChange={e=>setSeriesName(e.target.value)} /></label><label>系列介绍（选填）<textarea value={seriesSummary} maxLength={1000} onChange={e=>setSeriesSummary(e.target.value)} /></label><button className="primary-button" disabled={busy||!seriesName.trim()} onClick={()=>void organize()}>将{organizeIds.length}本整理为系列</button></>}
+                </div>}
+                {!books.some(book=>book.mine) && <div className="empty-state"><h3>给书屋添一本好书吧</h3><p>把读过的童书分享给下一位小读者。</p><button className="secondary-button" onClick={()=>go("publish")}>发布第一本书</button></div>}
                 <div className="mini-book-list">
                   {books
                     .filter((book) => book.mine)
                     .map((book) => (
                       <article className="shelf-book-card" key={book.id}>
+                        <label className="organize-check"><input type="checkbox" aria-label={`选择${book.title}整理系列`} checked={organizeIds.includes(book.id)} onChange={e=>setOrganizeIds(prev=>e.target.checked?[...prev,book.id]:prev.filter(id=>id!==book.id))} />整理</label>
                         <button className="shelf-book-main" onClick={() => showBook(book.id)}>
                           <BookCover book={book} />
-                          <span><strong>{book.title}</strong><small>{book.category} · {book.age}</small></span>
+                          <span><strong>{book.title}</strong><small>{book.category} · {book.age}{book.series ? ` · ${book.series.name}` : ""}</small></span>
                         </button>
                         <div className="shelf-book-controls">
                           <div className="shelf-book-badges">
-                            <span className={`status ${book.available ? "available" : "unavailable"}`}>{book.available ? "可借" : book.offShelf ? "不可借" : "借出中"}</span>
+                            <span className={`status ${book.available ? "available" : "unavailable"}`}>{book.available ? "可借" : book.offShelf ? "不可借" : book.status === "RESERVED" ? "申请中" : "借出中"}</span>
                             <span className={`shelf-state ${book.offShelf ? "offline" : "online"}`}>{book.offShelf ? "已下架" : "已上架"}</span>
                             {book.nonChildren && <span className="non-child-badge">非儿童读物</span>}
                           </div>
@@ -1108,25 +735,11 @@ function App() {
               </>
             ) : (
               <div className="record-list">
-                {loans
-                  .filter((loan) =>
-                    libraryTab === "lent" ? loan.isOwner : !loan.isOwner,
-                  )
-                  .map((loan) => (
-                    <button
-                      key={loan.id}
-                      onClick={() => {
-                        setTaskTab(active.has(loan.stage) ? "progress" : "messages");
-                        go("tasks");
-                      }}
-                    >
-                      <span>
-                        <strong>{loan.bookTitle}</strong>
-                        <small>{statusText[loan.stage]}</small>
-                      </span>
-                      <span>›</span>
-                    </button>
-                  ))}
+                {groupLoans(loans.filter(loan => libraryTab === "lent" ? loan.isOwner : !loan.isOwner)).map(group => {
+                  const first = group[0];
+                  const counts = group.reduce<Record<string,number>>((v,loan) => { v[loan.stage] = (v[loan.stage] || 0) + 1; return v; }, {});
+                  return <button key={first.groupId || first.id} onClick={() => { setTaskTab(group.some(loan => active.has(loan.stage)) ? "progress" : "done"); go("tasks"); }}><span><strong>{first.groupId ? `${first.isOwner ? first.borrower : first.owner} · ${group.length}本` : first.bookTitle}</strong><small>{Object.entries(counts).map(([stage,count]) => `${count}本${statusText[stage]}`).join("，")}</small></span><span>›</span></button>;
+                })}
               </div>
             )}
           </>
@@ -1200,12 +813,7 @@ function App() {
                 </label>
                 <label>
                   年龄段
-                  <select
-                    value={childAge}
-                    onChange={(event) => setChildAge(event.target.value)}
-                  >
-                    {options.ages.filter(option => option.active).map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
-                  </select>
+                  <ChoiceSelect label="孩子年龄段" value={childAge} onChange={setChildAge} options={options.ages.filter(o=>o.active).map(o=>({value:o.id,label:o.label}))}/>
                 </label>
               </div>
               <button
@@ -1247,6 +855,7 @@ function App() {
           </>
         )}
       </main>
+      <CartPanel showBar={["discover","shops","detail"].includes(page)} shopId={page === "discover" ? currentShop : ""} cart={cart} viewOrders={() => {setTaskTab("progress");go("tasks");}} continueShop={continueShop} />
       <footer className="site-footer">
         <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">
           陕ICP备2026026598号-1
@@ -1257,11 +866,11 @@ function App() {
         {nav.map((item) => (
           <button
             key={item.page}
-            className={page === item.page ? "active" : ""}
+            className={(item.page === "shops" ? page === "shops" || (page === "discover" && !!currentShop) : item.page === "discover" ? page === "discover" && !currentShop : item.page === "library" ? ["library","publish","profile"].includes(page) : page === item.page) ? "active" : ""}
             onClick={() => go(item.page)}
             aria-label={item.page === "tasks" && pendingCount > 0 ? `${item.label}，${pendingCount} 条待办` : undefined}
           >
-            <span aria-hidden="true">{item.icon}</span>
+            <LibraryIcon name={item.icon} />
             <span>{item.label}</span>
             {item.page === "tasks" && pendingCount > 0 && (
               <span className="nav-badge" aria-hidden="true">{pendingBadge}</span>

@@ -16,6 +16,6 @@ async function bootstrap() {
     if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method) && req.headers.origin && !allowedOrigins.includes(req.headers.origin)) return next(new ForbiddenException('来源不允许'));
     next();
   });
-  await app.listen(Number(process.env.PORT ?? 3000), '0.0.0.0');
+  await app.listen(Number(process.env.PORT ?? 3000), process.env.API_HOST ?? '0.0.0.0');
 }
 await bootstrap();

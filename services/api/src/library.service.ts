@@ -7,7 +7,7 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, 
 import { requireEmailDelivery, sendAccountCode } from './email.js';
 import { decodeCover, recognizeCover, summarizeBook } from './book-assist.js';
 
-const bookInclude = { ownerFamily: { select: { displayName: true } }, categoryOption: true, ageOption: true, conditionOption: true } as const;
+const bookInclude = { series: true, ownerFamily: { select: { displayName: true } }, categoryOption: true, ageOption: true, conditionOption: true } as const;
 type BookRow = Omit<Prisma.BookGetPayload<{ include: typeof bookInclude }>, 'coverData'>;
 
 function text(value: unknown, name: string, max: number, required = false) {
@@ -277,14 +277,73 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
     return { ok: true };
   }
 
-  async books(familyId?: string) {
+  private pagination(query: Record<string, string>) {
+    const page = Number(query.page ?? 1), pageSize = Number(query.pageSize ?? 100);
+    if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 200) throw new BadRequestException('分页参数不正确');
+    return { skip: (page - 1) * pageSize, take: pageSize, page, pageSize };
+  }
+
+  async books(familyId?: string, query: Record<string, string> = {}) {
     await this.expireRequests();
-    const rows = await this.book.findMany({ where: { OR: [{ status: { notIn: ['DRAFT', 'OFF_SHELF'] } }, ...(familyId ? [{ ownerFamilyId: familyId }] : [])] }, include: bookInclude, omit: { coverData: true }, orderBy: { createdAt: 'desc' }, take: 200 });
-    return rows.map(row => this.bookView(row, familyId));
+    const where: Prisma.BookWhereInput = { ownerFamily: { status: 'ACTIVE' }, OR: [{ status: { notIn: ['DRAFT', 'OFF_SHELF'] } }, ...(familyId ? [{ ownerFamilyId: familyId }] : [])] };
+    const paging = this.pagination(query);
+    const rows = await this.book.findMany({ where, include: bookInclude, omit: { coverData: true }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], skip: query.page ? paging.skip : 0, take: query.page ? paging.take : 200 });
+    const items = rows.map(row => this.bookView(row, familyId));
+    return query.page ? { items, total: await this.book.count({ where }), page: paging.page, pageSize: paging.pageSize } : items;
+  }
+
+  async shop(id: string) {
+    const shop = await this.family.findFirst({ where: { id, status: 'ACTIVE' }, select: { id: true, displayName: true } });
+    if (!shop) throw new NotFoundException('书屋不存在');
+    return shop;
+  }
+
+  async shopBooks(id: string, query: Record<string, string> = {}) {
+    await this.shop(id);
+    await this.expireRequests();
+    const paging = this.pagination(query);
+    const where: Prisma.BookWhereInput = { ownerFamilyId: id, status: { notIn: ['DRAFT', 'OFF_SHELF'] } };
+    const rows = await this.book.findMany({ where, include: bookInclude, omit: { coverData: true }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], skip: paging.skip, take: paging.take });
+    return { items: rows.map(row => this.bookView(row)), total: await this.book.count({ where }), page: paging.page, pageSize: paging.pageSize };
+  }
+
+  async bookDetail(id: string, familyId?: string) {
+    const row = await this.book.findFirst({ where: { id, ownerFamily: { status: 'ACTIVE' }, OR: [{ status: { notIn: ['DRAFT', 'OFF_SHELF'] } }, ...(familyId ? [{ ownerFamilyId: familyId }] : [])] }, include: bookInclude, omit: { coverData: true } });
+    if (!row) throw new NotFoundException('图书不存在或已下架');
+    return this.bookView(row, familyId);
+  }
+
+  private async seriesFields(familyId: string, body: Record<string, unknown>) {
+    if (body.seriesId === undefined && body.seriesOrder === undefined) return {};
+    if (body.seriesId != null && typeof body.seriesId !== 'string') throw new BadRequestException('系列格式不正确');
+    const seriesId = body.seriesId ? text(body.seriesId, '系列', 100, true) : null;
+    if (seriesId && !await this.bookSeries.findFirst({ where: { id: seriesId, ownerFamilyId: familyId } })) throw new BadRequestException('请选择本书屋的系列');
+    if (body.seriesOrder != null && typeof body.seriesOrder !== 'number' && typeof body.seriesOrder !== 'string') throw new BadRequestException('册序格式不正确');
+    const seriesOrder = body.seriesOrder == null || body.seriesOrder === '' ? null : Number(body.seriesOrder);
+    if (seriesOrder !== null && (!Number.isSafeInteger(seriesOrder) || seriesOrder < 1 || seriesOrder > 10000)) throw new BadRequestException('册序须为1到10000的整数');
+    return { seriesId, seriesOrder: seriesId ? seriesOrder : null };
+  }
+
+  async organizeSeries(familyId: string, body: Record<string, unknown>) {
+    const name = text(body.name, '系列名称', 100, true);
+    const summary = text(body.summary ?? '', '系列介绍', 1000);
+    const ids = this.bookIds(body.bookIds);
+    return this.$transaction(async tx => {
+      const rows = await tx.book.findMany({ where: { id: { in: ids }, ownerFamilyId: familyId }, select: { id: true } });
+      if (rows.length !== ids.length) throw new ForbiddenException('只能整理自己书屋的图书');
+      const series = await tx.bookSeries.create({ data: { ownerFamilyId: familyId, name, summary } });
+      await tx.book.updateMany({ where: { id: { in: ids }, ownerFamilyId: familyId }, data: { seriesId: series.id, seriesOrder: null } });
+      return series;
+    });
+  }
+
+  private bookIds(value: unknown) {
+    if (!Array.isArray(value) || !value.length || value.length > 200 || value.some(id => typeof id !== 'string' || !id || id.length > 100) || new Set(value).size !== value.length) throw new BadRequestException('请选择1到200本不同的图书');
+    return [...value] as string[];
   }
 
   private bookView(row: BookRow, familyId?: string) {
-    return { id: row.id, title: row.title, author: row.author ?? '', category: row.categoryOption?.label ?? '其他', categoryOptionId: row.categoryOptionId, age: row.ageOption?.label ?? '待确认', ageOptionId: row.ageOptionId, condition: row.conditionOption.label, conditionOptionId: row.conditionOptionId, owner: row.ownerFamily.displayName, summary: row.summary ?? '', nonChildren: row.nonChildren, coverUrl: row.coverMimeType ? `/api/books/${row.id}/cover?v=${row.updatedAt.getTime()}` : null, available: row.status === 'AVAILABLE', offShelf: row.status === 'OFF_SHELF', editable: row.ownerFamilyId === familyId && ['AVAILABLE', 'OFF_SHELF'].includes(row.status), mine: row.ownerFamilyId === familyId, tone: 'mint' };
+    return { id: row.id, shopId: row.ownerFamilyId, series: row.series ? { id: row.series.id, name: row.series.name, summary: row.series.summary } : null, seriesOrder: row.seriesOrder, status: row.status, title: row.title, author: row.author ?? '', category: row.categoryOption?.label ?? '其他', categoryOptionId: row.categoryOptionId, age: row.ageOption?.label ?? '待确认', ageOptionId: row.ageOptionId, condition: row.conditionOption.label, conditionOptionId: row.conditionOptionId, owner: row.ownerFamily.displayName, summary: row.summary ?? '', nonChildren: row.nonChildren, coverUrl: row.coverMimeType ? `/api/books/${row.id}/cover?v=${row.updatedAt.getTime()}` : null, available: row.status === 'AVAILABLE', offShelf: row.status === 'OFF_SHELF', editable: row.ownerFamilyId === familyId && ['AVAILABLE', 'OFF_SHELF'].includes(row.status), mine: row.ownerFamilyId === familyId, tone: 'mint' };
   }
 
   async cover(bookId: string, familyId?: string) {
@@ -318,7 +377,8 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
     const summary = text(body.summary ?? '', '简介', 1000);
     if (body.nonChildren !== undefined && typeof body.nonChildren !== 'boolean') throw new BadRequestException('读物标记不正确');
     const cover = body.coverImage == null ? null : await decodeCover(body.coverImage);
-    const row = await this.book.create({ data: { ownerFamilyId: familyId, title, author, categoryOptionId: category.id, ageOptionId: age.id, conditionOptionId: condition.id, summary, nonChildren: body.nonChildren === true, coverMimeType: cover?.mimeType, coverData: cover?.data, status: 'AVAILABLE' }, include: bookInclude, omit: { coverData: true } });
+    const series = await this.seriesFields(familyId, body);
+    const row = await this.book.create({ data: { ...series, ownerFamilyId: familyId, title, author, categoryOptionId: category.id, ageOptionId: age.id, conditionOptionId: condition.id, summary, nonChildren: body.nonChildren === true, coverMimeType: cover?.mimeType, coverData: cover?.data, status: 'AVAILABLE' }, include: bookInclude, omit: { coverData: true } });
     return this.bookView(row, familyId);
   }
 
@@ -333,7 +393,8 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
     ]);
     const cover = body.coverImage === undefined || body.coverImage === null ? null : await decodeCover(body.coverImage);
     if (body.nonChildren !== undefined && typeof body.nonChildren !== 'boolean') throw new BadRequestException('读物标记不正确');
-    const data: Prisma.BookUncheckedUpdateManyInput = {
+    const series = await this.seriesFields(familyId, body);
+    const data: Prisma.BookUncheckedUpdateManyInput = { ...series,
       title: text(body.title, '书名', 100, true), author: text(body.author ?? '', '作者', 100),
       summary: text(body.summary ?? '', '简介', 1000), ...(body.nonChildren !== undefined ? { nonChildren: body.nonChildren } : {}), categoryOptionId: category.id,
       ageOptionId: age.id, conditionOptionId: condition.id,
@@ -352,8 +413,8 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
 
   async loans(familyId: string) {
     await this.expireRequests();
-    const rows = await this.loan.findMany({ where: { OR: [{ ownerFamilyId: familyId }, { borrowerFamilyId: familyId }] }, include: { book: { select: { title: true } }, ownerFamily: { select: { displayName: true, phoneCiphertext: true } }, borrowerFamily: { select: { displayName: true, phoneCiphertext: true } } }, orderBy: { createdAt: 'desc' }, take: 200 });
-    return rows.map(row => ({ id: row.id, bookId: row.bookId, bookTitle: row.book.title, owner: row.ownerFamily.displayName, borrower: row.borrowerFamily.displayName, isOwner: row.ownerFamilyId === familyId, stage: row.status, place: decrypt(row.handoffDetailsCiphertext), contactPhone: ['HANDOFF_AGREED', 'LENT', 'RETURN_REQUESTED'].includes(row.status) ? decrypt(row.ownerFamilyId === familyId ? row.borrowerFamily.phoneCiphertext : row.ownerFamily.phoneCiphertext) : null, borrowerLoanConfirmed: !!row.borrowerLentConfirmedAt, ownerLoanConfirmed: !!row.ownerLentConfirmedAt, borrowerReturnConfirmed: !!row.borrowerReturnConfirmedAt, ownerReturnConfirmed: !!row.ownerReturnConfirmedAt, renewalRequested: !!row.renewalRequestedAt, renewed: !!row.renewedAt, dueAt: row.dueAt?.toISOString() ?? null, requestedAt: row.requestedAt.toISOString(), approvedAt: row.approvedAt?.toISOString() ?? null, lentAt: row.lentAt?.toISOString() ?? null, returnedAt: row.returnedAt?.toISOString() ?? null }));
+    const rows = await this.loan.findMany({ where: { OR: [{ ownerFamilyId: familyId }, { borrowerFamilyId: familyId }] }, include: { group: true, book: { select: { title: true } }, ownerFamily: { select: { displayName: true, phoneCiphertext: true } }, borrowerFamily: { select: { displayName: true, phoneCiphertext: true } } }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }] });
+    return rows.map(row => ({ id: row.id, groupId: row.groupId, message: row.group?.message ?? '', bookId: row.bookId, bookTitle: row.book.title, owner: row.ownerFamily.displayName, borrower: row.borrowerFamily.displayName, isOwner: row.ownerFamilyId === familyId, stage: row.status, place: decrypt(row.handoffDetailsCiphertext), contactPhone: ['HANDOFF_AGREED', 'LENT', 'RETURN_REQUESTED'].includes(row.status) ? decrypt(row.ownerFamilyId === familyId ? row.borrowerFamily.phoneCiphertext : row.ownerFamily.phoneCiphertext) : null, borrowerLoanConfirmed: !!row.borrowerLentConfirmedAt, ownerLoanConfirmed: !!row.ownerLentConfirmedAt, borrowerReturnConfirmed: !!row.borrowerReturnConfirmedAt, ownerReturnConfirmed: !!row.ownerReturnConfirmedAt, renewalRequested: !!row.renewalRequestedAt, renewed: !!row.renewedAt, dueAt: row.dueAt?.toISOString() ?? null, requestedAt: row.requestedAt.toISOString(), approvedAt: row.approvedAt?.toISOString() ?? null, lentAt: row.lentAt?.toISOString() ?? null, returnedAt: row.returnedAt?.toISOString() ?? null }));
   }
 
   async apply(familyId: string, bookId: string) {
@@ -364,6 +425,62 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
       const book = await tx.book.findUniqueOrThrow({ where: { id: bookId } });
       const loan = await tx.loan.create({ data: { bookId, ownerFamilyId: book.ownerFamilyId, borrowerFamilyId: familyId, status: 'REQUESTED' } });
       return { id: loan.id };
+    });
+  }
+
+  async applyGroup(familyId: string, body: Record<string, unknown>) {
+    await this.expireRequests();
+    const ids = this.bookIds(body.bookIds).sort();
+    const shopId = text(body.shopId, '书屋', 100, true);
+    if (shopId === familyId) throw new BadRequestException('不能向自己的书屋申请');
+    const key = text(body.idempotencyKey, '请求编号', 100, true);
+    const message = text(body.message ?? '', '留言', 500);
+    const fingerprint = createHash('sha256').update(JSON.stringify([shopId, ids, message])).digest('hex');
+    return this.$transaction(async tx => {
+      // Serialize retries for a borrower; all entry points claim books with conditional writes.
+      await tx.$queryRaw`SELECT id FROM "Family" WHERE id = ${familyId} FOR UPDATE`;
+      const existing = await tx.loanGroup.findUnique({ where: { borrowerFamilyId_idempotencyKey: { borrowerFamilyId: familyId, idempotencyKey: key } } });
+      if (existing) {
+        if (existing.requestFingerprint !== fingerprint) throw new ConflictException('请求编号已用于另一份申请');
+        return { id: existing.id };
+      }
+      const shop = await tx.family.findFirst({ where: { id: shopId, status: 'ACTIVE' } });
+      if (!shop) throw new NotFoundException('书屋不存在');
+      const rows = await tx.book.findMany({ where: { id: { in: ids } }, select: { id: true, ownerFamilyId: true, status: true } });
+      if (rows.length !== ids.length || rows.some(row => row.ownerFamilyId !== shopId)) throw new BadRequestException('一次只能申请同一家书屋的图书');
+      const unavailableIds = rows.filter(row => row.status !== 'AVAILABLE').map(row => row.id);
+      if (unavailableIds.length) throw new ConflictException({ message: '部分图书已不可借，请检查清单', unavailableIds });
+      // Stable lock order prevents overlapping batches from deadlocking.
+      for (const id of ids) {
+        const claimed = await tx.book.updateMany({ where: { id, ownerFamilyId: shopId, status: 'AVAILABLE' }, data: { status: 'RESERVED' } });
+        if (!claimed.count) throw new ConflictException({ message: '部分图书已不可借，请检查清单', unavailableIds: [id] });
+      }
+      const group = await tx.loanGroup.create({ data: { ownerFamilyId: shopId, borrowerFamilyId: familyId, idempotencyKey: key, requestFingerprint: fingerprint, message } });
+      await tx.loan.createMany({ data: ids.map(bookId => ({ bookId, groupId: group.id, ownerFamilyId: shopId, borrowerFamilyId: familyId })) });
+      return { id: group.id };
+    });
+  }
+
+  async actGroup(familyId: string, groupId: string, body: Record<string, unknown>) {
+    await this.expireRequests();
+    const action = text(body.action, '操作', 30, true);
+    return this.$transaction(async tx => {
+      const group = await tx.loanGroup.findUnique({ where: { id: groupId }, include: { loans: { orderBy: { id: 'asc' } } } });
+      if (!group) throw new NotFoundException('申请不存在');
+      if (group.ownerFamilyId !== familyId && group.borrowerFamilyId !== familyId) throw new ForbiddenException('无权处理此申请');
+      const eligible = group.loans.filter(loan => action === 'approve' || action === 'decline' || action === 'cancel' ? loan.status === 'REQUESTED'
+        : action === 'confirm-lend' ? loan.status === 'HANDOFF_AGREED' && !loan.borrowerLentConfirmedAt
+        : action === 'confirm-return' ? ['LENT', 'RETURN_REQUESTED'].includes(loan.status)
+        : action === 'request-return' ? loan.status === 'LENT' && !loan.borrowerReturnConfirmedAt
+        : action === 'request-renew' ? loan.status === 'LENT' && !loan.renewalRequestedAt && !loan.renewedAt
+        : action === 'approve-renew' ? loan.status === 'LENT' && !!loan.renewalRequestedAt && !loan.renewedAt
+        : action === 'set-place' ? loan.status === 'HANDOFF_AGREED' && !loan.borrowerLentConfirmedAt : false);
+      const ids = body.loanIds === undefined ? eligible.map(loan => loan.id) : this.bookIds(body.loanIds);
+      if (!ids.length || ids.some(id => !eligible.some(loan => loan.id === id))) throw new ConflictException('所选图书状态已变化，请刷新');
+      if (body.declineRest !== undefined && (body.declineRest !== true || action !== 'approve')) throw new BadRequestException('部分同意操作不正确');
+      for (const id of ids.sort()) await this.actInTransaction(tx, familyId, id, body);
+      if (body.declineRest === true) for (const loan of eligible.filter(loan => !ids.includes(loan.id))) await this.actInTransaction(tx, familyId, loan.id, { action: 'decline' });
+      return { ok: true, count: ids.length };
     });
   }
 
@@ -378,8 +495,11 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
 
   async act(familyId: string, loanId: string, body: Record<string, unknown>) {
     await this.expireRequests();
-    const action = text(body.action, '操作', 30, true);
-    return this.$transaction(async tx => {
+    return this.$transaction(tx => this.actInTransaction(tx, familyId, loanId, body));
+  }
+
+  private async actInTransaction(tx: Prisma.TransactionClient, familyId: string, loanId: string, body: Record<string, unknown>) {
+      const action = text(body.action, '操作', 30, true);
       const loan = await tx.loan.findUnique({ where: { id: loanId } });
       if (!loan) throw new NotFoundException('借阅记录不存在');
       const owner = loan.ownerFamilyId === familyId;
@@ -414,7 +534,6 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
       if (!changed.count) throw new ConflictException('借阅状态已变化，请刷新');
       if (bookStatus) await tx.book.update({ where: { id: loan.bookId }, data: { status: bookStatus } });
       return { ok: true };
-    });
   }
 
   async getAdmin(token?: string) {

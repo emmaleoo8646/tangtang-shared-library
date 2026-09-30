@@ -76,6 +76,7 @@ model Family {
   books           Book[]
   borrowedLoans   Loan[]         @relation("BorrowerFamily")
   ownedLoans      Loan[]         @relation("OwnerFamily")
+  series          BookSeries[]
   sessions        Session[]
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
@@ -99,6 +100,9 @@ model Book {
   id               String         @id @default(cuid())
   ownerFamilyId    String
   ownerFamily      Family         @relation(fields: [ownerFamilyId], references: [id], onDelete: Restrict)
+  seriesId         String?
+  series           BookSeries? @relation(fields: [seriesId], references: [id], onDelete: SetNull)
+  seriesOrder      Int?
   title            String
   author           String?
   summary          String?
@@ -119,8 +123,33 @@ model Book {
   updatedAt        DateTime       @updatedAt
 
   @@index([ownerFamilyId, status])
+  @@index([seriesId, seriesOrder])
   @@index([title])
   @@index([categoryOptionId, ageOptionId])
+}
+
+model BookSeries {
+  id String @id @default(cuid())
+  ownerFamilyId String
+  ownerFamily Family @relation(fields: [ownerFamilyId], references: [id], onDelete: Cascade)
+  name String
+  summary String @default("")
+  books Book[]
+  createdAt DateTime @default(now())
+  @@index([ownerFamilyId])
+}
+
+model LoanGroup {
+  id String @id @default(cuid())
+  ownerFamilyId String
+  borrowerFamilyId String
+  idempotencyKey String
+  requestFingerprint String
+  message String @default("")
+  loans Loan[]
+  createdAt DateTime @default(now())
+  @@unique([borrowerFamilyId, idempotencyKey])
+  @@index([ownerFamilyId, createdAt])
 }
 
 model CatalogOption {
@@ -173,6 +202,8 @@ model AdminAuditEvent {
 
 model Loan {
   id                       String     @id @default(cuid())
+  groupId                  String?
+  group                    LoanGroup? @relation(fields: [groupId], references: [id], onDelete: Restrict)
   bookId                   String
   book                     Book       @relation(fields: [bookId], references: [id], onDelete: Restrict)
   ownerFamilyId            String
@@ -195,6 +226,7 @@ model Loan {
   createdAt                DateTime   @default(now())
   updatedAt                DateTime   @updatedAt
 
+  @@index([groupId])
   @@index([bookId, status])
   @@index([ownerFamilyId, status])
   @@index([borrowerFamilyId, status])
