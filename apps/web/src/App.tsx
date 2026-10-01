@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { api, allBooks, ApiError, type Book, type Family, type Loan, type OptionLists } from "./api";
 import { SelectBook, Browse, Shops, ChoiceSelect, CartPanel, GroupCard, groupLoans, useBorrowCart } from "./Borrowing";
 import { LibraryIcon, type LibraryIconName } from "./components/LibraryIcon";
-import { SharedBookCover } from "./components/SharedBookCover";
 import { loanPresentation } from "./loanPresentation";
 import { CoverCropDialog } from "./CoverCropDialog";
 import { AiBusyNote } from "./components/AiBusyNote";
+import { OwnBooks } from "./OwnBooks";
+import { BookDetails } from "./components/BookDetails";
 
 type Page = "discover" | "shops" | "detail" | "publish" | "tasks" | "library" | "profile";
 const statusText: Record<string, string> = {
@@ -47,9 +48,6 @@ function needsAttention(loan: Loan) {
   return loan.stage === "LENT" && loan.isOwner && loan.renewalRequested && !loan.renewed;
 }
 
-function BookCover({ book, large = false }: { book: Book; large?: boolean }) {
-  return <div className={`shared-cover-wrap ${large ? "large" : ""}`}><SharedBookCover book={book} /></div>;
-}
 
 function App() {
   const [page, setPage] = useState<Page>("discover");
@@ -65,9 +63,6 @@ function App() {
   const [ownedSeries, setOwnedSeries] = useState<{id:string;name:string}[]>([]);
   const [publishSeries, setPublishSeries] = useState("");
   const [seriesOrder, setSeriesOrder] = useState("");
-  const [organizeIds, setOrganizeIds] = useState<string[]>([]);
-  const [seriesName, setSeriesName] = useState("");
-  const [seriesSummary, setSeriesSummary] = useState("");
   const [taskTab, setTaskTab] = useState<"all" | "progress" | "done">("all");
   const [libraryTab, setLibraryTab] = useState<"my" | "borrowed" | "lent">(
     "my",
@@ -193,8 +188,10 @@ function App() {
       await work();
       await refresh();
       if (success) flash(success);
+      return true;
     } catch (error) {
       flash((error as Error).message);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -247,7 +244,6 @@ function App() {
     await run(async () => {
       await api("/auth/logout", "POST");
       setNickname("");
-      setOrganizeIds([]); setSeriesName(""); setSeriesSummary("");
       setPage("discover");
     }, "已退出登录");
   }
@@ -413,24 +409,19 @@ function App() {
       loans={group[0].groupId ? loans.filter(l=>l.groupId===group[0].groupId) : group}
       busy={busy} defaultPlace={loans.find(l => l.isOwner && l.place)?.place || ""} act={groupAction} />);
   }
-  async function organize() {
-    await run(async () => { await api('/series', 'POST', {name:seriesName, summary:seriesSummary, bookIds:organizeIds}); setOrganizeIds([]); setSeriesName(''); setSeriesSummary(''); }, '已整理为系列');
+  async function organize(name: string, summary: string, ids: string[]) {
+    return (await run(() => api('/series', 'POST', { name, summary, bookIds: ids }), '已整理为系列')) ?? false;
   }
 
 
   return (
     <div className="site-shell">
-      <div className="demo-strip">
-        <span className="demo-dot" />
-        共享书屋测试版 · 由家长操作，线下公共地点交接
-      </div>
       <header className="site-header">
         <div className="header-inner">
           <button className="brand" onClick={() => go("discover")}>
-            <img src="/brand.png" alt="" />
+            <span className="brand-symbol"><LibraryIcon name="book" /></span>
             <span>
               <strong>糖糖的共享书屋</strong>
-              <small>让读过的童书，遇见下一个小读者</small>
             </span>
           </button>
           <nav className="desktop-nav" aria-label="主导航">
@@ -464,7 +455,7 @@ function App() {
           </button>
         </div>
       </header>
-      <main className={`main-content ${cart.carts.length && ["discover","shops","detail"].includes(page) ? "with-borrow-cart" : ""}`}>
+      <main className={`main-content page-${page} ${cart.carts.length && ["discover","shops","detail"].includes(page) ? "with-borrow-cart" : ""}`}>
         {page === "discover" && <Browse key={browseKey} books={books} options={options} cart={cart} onShopChange={setCurrentShop} />}
         {page === "shops" && <Shops books={books} enterShop={continueShop} />}
         {page === "detail" && selectedBook && (
@@ -472,64 +463,12 @@ function App() {
             <button className="back-link" onClick={() => go(previousPage)}>
               ‹ 返回{previousPage === "library" ? "我的书屋" : "找书"}
             </button>
-            <div className="detail-layout">
-              <BookCover book={selectedBook} large />
-              <div className="detail-info">
-                <span
-                  className={`status ${selectedBook.available ? "available" : "unavailable"}`}
-                >
-                  {selectedBook.available ? "可借" : "暂不可借"}
-                </span>
-                <h1>{selectedBook.title}</h1>
-                <p className="detail-author">
-                  {selectedBook.author} · 来自 {selectedBook.owner}
-                </p>
-                <div className="detail-tags">
-                  <span>{selectedBook.category}</span>
-                  <span>{selectedBook.age}</span>
-                  <span>{selectedBook.condition}</span>
-                  {selectedBook.series && <span>{selectedBook.series.name}{selectedBook.seriesOrder ? ` · 第${selectedBook.seriesOrder}册` : ""}</span>}
-                  {selectedBook.nonChildren && <span className="non-child-badge">非儿童读物</span>}
-                </div>
-                <section className="detail-summary">
-                  <h2>关于这本书</h2>
-                  <p>{selectedBook.summary || "书主暂未填写简介。"}</p>
-                </section>
-                <button className="text-button" onClick={() => continueShop(selectedBook.shopId)}>进入{selectedBook.owner} ›</button>
-                <div className="detail-safety">
-                  书主同意时确认公共交接地点。借书家庭收到书后，开始 14 天借期。
-                </div>
-                <section className="borrow-guide" aria-label="借阅步骤">
-                  <h2>四步完成借阅</h2>
-                  <ol>
-                    <li><b>1</b><span>申请<br /><small>书主同意并确定地点</small></span></li>
-                    <li><b>2</b><span>取书<br /><small>借方收到书后确认</small></span></li>
-                    <li><b>3</b><span>阅读<br /><small>借期 14 天</small></span></li>
-                    <li><b>4</b><span>归还<br /><small>书主收回书后确认</small></span></li>
-                  </ol>
-                </section>
-                {selectedBook.mine ? (
-                  <button
-                    className="primary-button"
-                    onClick={() => go("library")}
-                  >
-                    查看我的藏书
-                  </button>
-                ) : selectedLoan ? (
-                  <button
-                    className="primary-button"
-                    onClick={() => {
-                      setTaskTab("progress");
-                      go("tasks");
-                    }}
-                  >
-                    查看这笔借阅
-                  </button>
-                ) : (
-                  <SelectBook book={selectedBook} cart={cart} />
-                )}
-              </div>
-            </div>
+            <BookDetails book={selectedBook} familyId={family?.id} onShop={() => continueShop(selectedBook.shopId)} actions={<>
+              <button className="secondary-button" onClick={() => go(previousPage)}>返回{previousPage === "library" ? "我的藏书" : "找书"}</button>
+              {selectedBook.mine ? <button className="primary-button" onClick={() => go("library")}>查看我的藏书</button>
+                : selectedLoan ? <button className="primary-button" onClick={() => { setTaskTab("progress"); go("tasks"); }}>查看这笔借阅</button>
+                : <SelectBook book={selectedBook} cart={cart} />}
+            </>} />
           </>
         )}
         {page === "publish" && (
@@ -554,7 +493,7 @@ function App() {
                   </div>
                   <div className="cover-upload-content">
                     <strong>添加封面照片</strong>
-                    <p>原图可达 20 MB，裁剪后仅上传不超过 600 KB 的封面。完成裁剪后会自动识别并检索简介。{coverChanged && coverBytes ? `当前封面 ${Math.round(coverBytes / 1000)} KB。` : ""}</p>
+                    <p>拍照或上传清晰封面，裁剪后自动识别书名并填写简介。{coverChanged && coverBytes ? `当前封面 ${Math.round(coverBytes / 1000)} KB。` : ""}</p>
                     <div className="cover-upload-actions">
                       <input ref={coverInput} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" className="visually-hidden" aria-label="拍照或上传图书封面" onChange={(event) => { chooseCover(event.target.files?.[0]); event.target.value = ""; }} />
                       <button type="button" className="secondary-button" onClick={() => coverInput.current?.click()}>{coverImage ? "更换照片" : "拍照 / 上传"}</button>
@@ -648,7 +587,7 @@ function App() {
           </>
         )}
         {page === "tasks" && <>
-          <div className="page-title"><p className="eyebrow">每一步都有回应</p><h1>我的借阅</h1><p>和一家书屋的几本书，放在一起看。</p></div>
+          <div className="page-title"><h1>我的借阅</h1><p>和一家书屋的几本书，放在一起看。</p></div>
           <div className="tabs borrowing-tabs">{([{value:"all",label:"全部"},{value:"progress",label:"进行中"},{value:"done",label:"已结束"}] as const).map(t=>{
             const count=groupLoans(loans).filter(g=>t.value==="all" || (t.value==="done" ? loanPresentation(g).done : !loanPresentation(g).done)).length;
             return <button key={t.value} className={taskTab===t.value?"selected":""} onClick={()=>setTaskTab(t.value)}>{t.label}<span className="tab-count">{count}</span></button>;
@@ -661,19 +600,16 @@ function App() {
         {page === "library" && (
           <>
             <div className="page-title">
-              <p className="eyebrow">一家一座小书屋</p>
-              <div className="my-library-title"><h1>我的书屋</h1><button className="primary-button" onClick={()=>go("publish")}><LibraryIcon name="plus"/> 发布图书</button></div>
-              <p>管理分享的书和借阅记录。</p>
+              <div className="my-library-title"><h1>我的书屋</h1><button className="secondary-button publish-entry" onClick={()=>go("publish")}><LibraryIcon name="plus"/> 发布图书</button></div>
             </div>
             <section className="family-card">
               <div className="family-avatar">{family?.displayName[0]}</div>
               <div>
-                <span>家庭书屋</span>
                 <h2>{family?.displayName}</h2>
-                <p>孩子档案不会在公开页面展示。</p>
+                <p>让好故事继续流动</p>
               </div>
               <button
-                className="secondary-button"
+                className="text-button"
                 onClick={() => go("profile")}
               >
                 家庭资料
@@ -700,39 +636,8 @@ function App() {
               </button>
             </div>
             {libraryTab === "my" ? (
-              <>
-                <div className="library-heading">
-                  <h2>{books.filter((book) => book.mine).length} 本书</h2>
-                </div>
-                {books.some(book=>book.mine) && <div className="series-organizer">
-                  <h3>多选藏书，整理为系列</h3>
-                  <p>选中几本相关的书，整理成系列，方便其他家庭一起借阅。</p>
-                  {organizeIds.length > 0 && <><label>系列名称<input value={seriesName} maxLength={100} onChange={e=>setSeriesName(e.target.value)} /></label><label>系列介绍（选填）<textarea value={seriesSummary} maxLength={1000} onChange={e=>setSeriesSummary(e.target.value)} /></label><button className="primary-button" disabled={busy||!seriesName.trim()} onClick={()=>void organize()}>将{organizeIds.length}本整理为系列</button></>}
-                </div>}
-                {!books.some(book=>book.mine) && <div className="empty-state"><h3>给书屋添一本好书吧</h3><p>把读过的童书分享给下一位小读者。</p><button className="secondary-button" onClick={()=>go("publish")}>发布第一本书</button></div>}
-                <div className="mini-book-list">
-                  {books
-                    .filter((book) => book.mine)
-                    .map((book) => (
-                      <article className="shelf-book-card" key={book.id}>
-                        <label className="organize-check"><input type="checkbox" aria-label={`选择${book.title}整理系列`} checked={organizeIds.includes(book.id)} onChange={e=>setOrganizeIds(prev=>e.target.checked?[...prev,book.id]:prev.filter(id=>id!==book.id))} />整理</label>
-                        <button className="shelf-book-main" onClick={() => showBook(book.id)}>
-                          <BookCover book={book} />
-                          <span><strong>{book.title}</strong><small>{book.category} · {book.age}{book.series ? ` · ${book.series.name}` : ""}</small></span>
-                        </button>
-                        <div className="shelf-book-controls">
-                          <div className="shelf-book-badges">
-                            <span className={`status ${book.available ? "available" : "unavailable"}`}>{book.available ? "可借" : book.offShelf ? "不可借" : book.status === "RESERVED" ? "申请中" : "借出中"}</span>
-                            <span className={`shelf-state ${book.offShelf ? "offline" : "online"}`}>{book.offShelf ? "已下架" : "已上架"}</span>
-                            {book.nonChildren && <span className="non-child-badge">非儿童读物</span>}
-                          </div>
-                          <button className="secondary-button shelf-edit" disabled={!book.editable || busy} title={book.editable ? "编辑图书" : "借阅申请或借出期间不能编辑"} onClick={() => startEdit(book)}>编辑</button>
-                          {(book.available || book.offShelf) && <button className="secondary-button" disabled={busy} onClick={() => setShelf(book)}>{book.available ? "下架" : "上架"}</button>}
-                        </div>
-                      </article>
-                    ))}
-                </div>
-              </>
+              <OwnBooks books={books.filter(book => book.mine)} busy={busy} showBook={showBook}
+                editBook={startEdit} setShelf={book => { void setShelf(book); }} publish={() => go("publish")} organize={organize} />
             ) : (
               <div className="record-list">
                 {groupLoans(loans.filter(loan => libraryTab === "lent" ? loan.isOwner : !loan.isOwner)).map(group => {
@@ -860,6 +765,7 @@ function App() {
         <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">
           陕ICP备2026026598号-1
         </a>
+        <span className="site-footnote">共享书屋测试版 · 由家长操作，公共地点交接</span>
         <a href={import.meta.env.DEV ? "http://127.0.0.1:5174/admin/" : "/admin/"}>管理员入口</a>
       </footer>
       <nav className="mobile-nav" aria-label="底部导航">

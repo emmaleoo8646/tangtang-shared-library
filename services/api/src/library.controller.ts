@@ -67,7 +67,9 @@ export class LibraryController {
   shop(@Param('id') id: string) { return this.library.shop(id); }
 
   @Get('shops/:id/books')
-  shopBooks(@Param('id') id: string, @Query() query: Record<string, string>) { return this.library.shopBooks(id, query); }
+  async shopBooks(@Req() req: Request, @Param('id') id: string, @Query() query: Record<string, string>) {
+    return this.library.shopBooks(id, query, (await this.library.getFamily(cookie(req)))?.id);
+  }
 
   @Get('books/:id')
   async book(@Req() req: Request, @Param('id') id: string) { return this.library.bookDetail(id, (await this.library.getFamily(cookie(req)))?.id); }

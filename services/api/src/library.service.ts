@@ -298,13 +298,13 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
     return shop;
   }
 
-  async shopBooks(id: string, query: Record<string, string> = {}) {
+  async shopBooks(id: string, query: Record<string, string> = {}, familyId?: string) {
     await this.shop(id);
     await this.expireRequests();
     const paging = this.pagination(query);
     const where: Prisma.BookWhereInput = { ownerFamilyId: id, status: { notIn: ['DRAFT', 'OFF_SHELF'] } };
     const rows = await this.book.findMany({ where, include: bookInclude, omit: { coverData: true }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], skip: paging.skip, take: paging.take });
-    return { items: rows.map(row => this.bookView(row)), total: await this.book.count({ where }), page: paging.page, pageSize: paging.pageSize };
+    return { items: rows.map(row => this.bookView(row, familyId)), total: await this.book.count({ where }), page: paging.page, pageSize: paging.pageSize };
   }
 
   async bookDetail(id: string, familyId?: string) {

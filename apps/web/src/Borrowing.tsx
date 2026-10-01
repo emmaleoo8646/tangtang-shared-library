@@ -12,6 +12,9 @@ import { SharedBookCover } from "./components/SharedBookCover";
 import { LibraryIcon } from "./components/LibraryIcon";
 import { loanPresentation } from "./loanPresentation";
 import { selectionPresentation } from "./selectionPresentation";
+import { canBorrow, groupCatalog, isOwnBook, matchesCatalog, sortVolumes } from "./catalogPresentation";
+import { BookVisual } from "./components/BookVisual";
+import { BookDetails } from "./components/BookDetails";
 import type { ReactNode } from "react";
 
 type Cart = {
@@ -78,6 +81,7 @@ export function useBorrowCart(
       }
       localStorage.removeItem(storageKey("guest"));
     }
+    next = next.filter(c => c.shopId !== account);
     identity.current = account;
     setCarts(next);
     setCartAccount(account);
@@ -109,7 +113,7 @@ export function useBorrowCart(
     });
   function choose(rows: Book[], toggle = false) {
     const eligible = rows.filter(
-      (b) => b.available && b.shopId !== family?.id && !b.offShelf,
+      (b) => canBorrow(b, family?.id),
     );
     if (!eligible.length) return;
     const first = eligible[0];
@@ -171,7 +175,7 @@ export function useBorrowCart(
       const rows = currentBooks(cart);
       // Send the original key even if availability changed: the server may already have
       // committed this request before a previous response was lost.
-      const ids = (availableOnly ? rows.filter((b) => b.available) : rows).map(
+      const ids = (availableOnly ? rows.filter((b) => canBorrow(b, family?.id)) : rows).map(
         (b) => b.id,
       );
       if (!ids.length) {
@@ -223,6 +227,7 @@ export function useBorrowCart(
   const selected = (book: Book) =>
     carts.some((c) => c.books.some((b) => b.id === book.id));
   return {
+    familyId: family?.id,
     carts,
     activeShop,
     setActiveShop,
@@ -245,7 +250,7 @@ export function Cover({ book }: { book: Book }) {
   return <SharedBookCover book={book} />;
 }
 const stateLabel = (b: Book) =>
-  b.status === "AVAILABLE"
+  b.mine ? "本屋藏书" : b.status === "AVAILABLE"
     ? "可借"
     : b.status === "RESERVED"
       ? "申请中"
@@ -282,22 +287,22 @@ export function SelectBook({ book, cart }: { book: Book; cart: BorrowCart }) {
     <button
       ref={buttonRef}
       className="select-book"
-      aria-label={book.available && !book.mine ? `选这本《${book.title}》` : undefined}
+      aria-label={canBorrow(book, cart.familyId) ? `选这本《${book.title}》` : undefined}
       aria-pressed={false}
-      disabled={!book.available || book.mine || cart.busy}
+      disabled={!canBorrow(book, cart.familyId) || cart.busy}
       onClick={() => {
         restoreFocus.current = true;
         cart.choose([book]);
       }}
     >
-      {book.mine ? "本屋藏书" : !book.available ? stateLabel(book) : "＋ 选这本"}
+      {isOwnBook(book, cart.familyId) ? "本屋藏书" : !canBorrow(book, cart.familyId) ? stateLabel(book) : "＋ 选这本"}
     </button>
   );
 }
 function SeriesSelect({ rows, cart, filtering, complete, primary = false }: {
   rows: Book[]; cart: BorrowCart; filtering: boolean; complete: () => void; primary?: boolean;
 }) {
-  const selection = selectionPresentation(rows, cart.selected);
+  const selection = selectionPresentation(rows, cart.selected, cart.familyId);
   return <button
     className={`${primary ? "primary-button" : "select-book"} ${selection.allSelected ? "chosen" : ""}`}
     disabled={cart.busy || !selection.total}
@@ -309,16 +314,18 @@ function SeriesSelect({ rows, cart, filtering, complete, primary = false }: {
     : selection.selectedCount ? `选剩余${selection.remaining.length}本`
     : `${filtering ? "选符合条件的" : "选可借"}${selection.total}本`}</button>;
 }
-function Sheet({
+export function Sheet({
   title,
   close,
   children,
   footer,
   eyebrow,
   description,
+  variant,
 }: {
   eyebrow?: string;
   description?: string;
+  variant?: "book" | "series";
   title: string;
   close: () => void;
   children: ReactNode;
@@ -339,9 +346,9 @@ function Sheet({
         close();
       }
       if (e.key === "Tab") {
-        const nodes = ref.current?.querySelectorAll<HTMLElement>(
+        const nodes = Array.from(ref.current?.querySelectorAll<HTMLElement>(
           'button:not(:disabled),input,textarea,select,a[href],[tabindex="0"]',
-        );
+        ) || []).filter(node => !node.hasAttribute("disabled") && node.getClientRects().length > 0);
         if (!nodes?.length) return;
         const first = nodes[0],
           last = nodes[nodes.length - 1];
@@ -373,13 +380,14 @@ function Sheet({
       <div
         ref={ref}
         tabIndex={-1}
-        className="borrow-sheet"
+        className={`borrow-sheet ${variant ? `borrow-sheet--${variant}` : ""}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}
         onClick={(e) => e.stopPropagation()}
       >
         <header>
+          {variant && <button className="sheet-back" onClick={close}>‹ 返回{variant === "book" ? "找书" : "图书列表"}</button>}
           <div className="sheet-heading">
             {eyebrow && <p className="eyebrow">{eyebrow}</p>}
             <h2>{title}</h2>
@@ -535,7 +543,7 @@ export function Shops({
                     <h2>{b.owner}</h2>
                     <p>
                       {rows.length}本藏书 ·{" "}
-                      {rows.filter((v) => v.available).length}本可借
+                      {rows.filter(v => canBorrow(v)).length}本可借
                     </p>
                   </div>
                   <LibraryIcon name="chevron" />
@@ -572,15 +580,6 @@ export function Browse({
   cart: BorrowCart;
   onShopChange: (id: string) => void;
 }) {
-  const [twoColumns, setTwoColumns] = useState(
-    () => matchMedia("(max-width: 1000px)").matches,
-  );
-  useEffect(() => {
-    const media = matchMedia("(max-width: 1000px)");
-    const change = () => setTwoColumns(media.matches);
-    media.addEventListener("change", change);
-    return () => media.removeEventListener("change", change);
-  }, []);
   const saved = useMemo(() => {
     try {
       const state = JSON.parse(sessionStorage.getItem("tt-browse") || "{}");
@@ -705,68 +704,17 @@ export function Browse({
     history.pushState(null, "", id ? `/?shop=${encodeURIComponent(id)}` : "/");
     window.scrollTo(0, 0);
   }
-  const source = (shopId ? shopBooks : books).filter(
-    (b) => !b.offShelf && b.status !== "DRAFT",
-  );
-  const fits = (b: Book) =>
-    (age === "全部" || b.age === age) &&
-    (category === "全部" || b.category === category) &&
-    (!onlyAvailable || b.available);
-  const term = query.trim().toLocaleLowerCase();
-  const results = source
-    .filter(
-      (b) =>
-        fits(b) &&
-        (!term ||
-          `${b.title} ${b.author} ${b.series?.name || ""}`
-            .toLocaleLowerCase()
-            .includes(term)),
-    )
-    .sort((a, b) => Number(b.available) - Number(a.available));
-  const grouped: { book: Book; rows: Book[]; all: Book[] }[] = [];
-  for (const book of results) {
-    const all = book.series
-      ? source.filter(
-          (b) => b.series?.id === book.series?.id && b.shopId === book.shopId,
-        )
-      : [book];
-    const individual =
-      term && !book.series?.name.toLocaleLowerCase().includes(term);
-    if (!book.series || all.length < 2 || individual)
-      grouped.push({ book, rows: [book], all: [book] });
-    else {
-      const existing = grouped.find(
-        (g) =>
-          g.book.series?.id === book.series?.id &&
-          g.book.shopId === book.shopId,
-      );
-      if (existing) existing.rows.push(book);
-      else grouped.push({ book, rows: [book], all });
-    }
-  }
-  // A two-column list puts wide series together, so single books can form complete rows.
-  // Keep the DOM and visual order identical for keyboard navigation, and prioritize borrowable books.
-  const displayGroups = twoColumns
-    ? [...grouped].sort(
-        (a, b) =>
-          Number(b.rows.some((v) => v.available)) -
-            Number(a.rows.some((v) => v.available)) ||
-          Number(b.all.length > 1) - Number(a.all.length > 1),
-      )
-    : grouped;
-  const seriesAll = series
-    ? source
-        .filter(
-          (b) =>
-            b.series?.id === series.series?.id && b.shopId === series.shopId,
-        )
-        .sort(
-          (a, b) =>
-            (a.seriesOrder ?? Infinity) - (b.seriesOrder ?? Infinity) ||
-            a.title.localeCompare(b.title, "zh-CN"),
-        )
-    : [];
-  const filtering = age !== "全部" || category !== "全部";
+  const source = (shopId ? shopBooks : books)
+    .filter(book => !book.offShelf && book.status !== "DRAFT")
+    .map(book => ({ ...book, mine: isOwnBook(book, cart.familyId) }));
+  const fits = (book: Book) => matchesCatalog(book, { query, age, category, onlyAvailable }, cart.familyId);
+  const results = source.filter(fits)
+    .sort((a, b) => Number(canBorrow(b, cart.familyId)) - Number(canBorrow(a, cart.familyId)));
+  const displayGroups = groupCatalog(source, results, query);
+  const seriesAll = series ? sortVolumes(source.filter(book =>
+    book.series?.id === series.series?.id && book.shopId === series.shopId,
+  )) : [];
+  const filtering = age !== "全部" || category !== "全部" || onlyAvailable;
   const shops = [
     ...new Map(
       books
@@ -796,7 +744,7 @@ export function Browse({
           <p>在这一家选几本，一次申请，一起交接。</p>
           <div className="shop-banner-bottom">
             <span>
-              {source.length}本藏书 · {source.filter((b) => b.available).length}
+              {source.length}本藏书 · {source.filter(b => canBorrow(b, cart.familyId)).length}
               本可借
             </span>
             <button
@@ -816,38 +764,14 @@ export function Browse({
             </button>
           </div>
         </section>
-      ) : (
-        <>
-          <section className="reading-hero">
-            <div>
-              <p className="eyebrow">分享闲置童书 · 免费借阅</p>
-              <h1>
-                一起借几本，
-                <br />
-                带一袋故事回家。
-              </h1>
-              <p>发现喜欢的书，走进书屋，一次借齐几本。</p>
-            </div>
-            <img src="/brand.png" alt="两个孩子在书屋分享图书" />
-          </section>
-          <section className="shop-shortcuts" aria-label="推荐书屋">
-            <div className="shop-shortcuts-heading"><h2>逛逛小书屋</h2>
-              <button className="text-button" onClick={() => setShopsOpen(true)}>更多书屋 ›</button>
-            </div>
-            <div className="shop-shortcuts-list">
-            {shops.slice(0, 4).map((s) => (
-              <button key={s.id} aria-label={`进入${s.owner}`} onClick={() => enterShop(s.id)}>
-                <span className="shop-avatar" aria-hidden="true">{s.owner.slice(0, 1)}</span>
-                <span className="shortcut-info"><b>{s.owner}</b><small>
-                  {books.filter((b) => b.shopId === s.id && b.available && !b.offShelf).length}本可借 · {books.filter((b) => b.shopId === s.id && !b.offShelf).length}本藏书
-                </small></span>
-                <LibraryIcon name="chevron" />
-              </button>
-            ))}
-            </div>
-          </section>
-        </>
-      )}
+      ) : <section className="reading-hero">
+        <div>
+          <p className="eyebrow">分享闲置童书 · 免费借阅</p>
+          <h1>一起借几本，<br />带一袋故事回家。</h1>
+          <p>发现喜欢的书，走进书屋，一次借齐几本。</p>
+        </div>
+        <img src="/brand.png" alt="两个孩子在书屋分享图书" />
+      </section>}
       <section className="browse-tools">
         <div className="browse-search">
           <LibraryIcon name="search" />
@@ -909,6 +833,24 @@ export function Browse({
           </div>
         </div>
       </section>
+      {!shopId && (
+          <section className="shop-shortcuts" aria-label="推荐书屋">
+            <div className="shop-shortcuts-heading"><h2>逛逛小书屋</h2>
+              <button className="text-button" onClick={() => setShopsOpen(true)}>更多书屋 ›</button>
+            </div>
+            <div className="shop-shortcuts-list">
+            {shops.slice(0, 4).map((s) => (
+              <button key={s.id} aria-label={`进入${s.owner}`} onClick={() => enterShop(s.id)}>
+                <span className="shop-avatar" aria-hidden="true">{s.owner.slice(0, 1)}</span>
+                <span className="shortcut-info"><b>{s.owner}</b><small>
+                  {books.filter(b => b.shopId === s.id && canBorrow(b, cart.familyId)).length}本可借 · {books.filter((b) => b.shopId === s.id && !b.offShelf).length}本藏书
+                </small></span>
+                <LibraryIcon name="chevron" />
+              </button>
+            ))}
+            </div>
+          </section>
+      )}
       <div className="section-heading">
         <h2>{loading ? "正在打开书屋…" : `找到 ${results.length} 本书`}</h2>
         <span>点封面看详情 · 直接选书</span>
@@ -932,109 +874,31 @@ export function Browse({
         </div>
       )}
       <div className="reading-grid">
-        {displayGroups.map(({ book, rows, all }) =>
-          all.length > 1 && book.series ? (
-            <article
-              className={`reading-card reading-series ${rows.some(cart.selected) ? "is-selected" : ""}`}
-              key={`${book.shopId}:${book.series.id}`}
-            >
-              <button
-                className="series-covers"
-                aria-label={`查看${book.series.name}详情`}
-                onClick={() => setSeries(book)}
-              >
-                {rows.slice(0, 3).map((b) => (
-                  <Cover key={b.id} book={b} />
-                ))}
-              </button>
-              <div className="reading-card-content">
-                <h3>
-                  <button
-                    className="plain-link"
-                    onClick={() => setSeries(book)}
-                  >
-                    {book.series.name}
-                  </button>
-                </h3>
-                <p>{[...new Set(rows.map((b) => b.age))].join(" / ")}</p>
-                <button
-                  className="text-button"
-                  onClick={() => enterShop(book.shopId)}
-                >
-                  {book.owner} · 进书屋 ›
-                </button>
-                <p>
-                  本屋有{all.length}本，其中
-                  {all.filter((b) => b.available).length}本可借
-                </p>
-                <p className="selected-note">
-                  已选
-                  {rows.filter((b) => b.available && cart.selected(b)).length}/
-                  {rows.filter((b) => b.available).length}本
-                </p>
-                <div className="series-buttons">
-                  <SeriesSelect rows={rows} cart={cart} filtering={filtering || !!query}
-                    complete={() => setSeries(book)} />
-                  <button
-                    className="text-button"
-                    onClick={() => setSeries(book)}
-                  >
-                    挑选分册
-                  </button>
-                </div>
-              </div>
-            </article>
-          ) : (
-            <article
-              className={`reading-card ${cart.selected(book) ? "is-selected" : ""}`}
-              key={book.id}
-            >
-              <button
-                className="cover-link"
-                aria-label={`查看${book.title}详情`}
-                onClick={() => setDetail(book)}
-              >
-                <Cover book={book} />
-              </button>
-              <div className="reading-card-content">
-                <span
-                  className={`status ${book.available ? "available" : "unavailable"}`}
-                >
-                  {stateLabel(book)}
-                </span>
-                {book.nonChildren && (
-                  <span className="non-child-badge">非儿童读物</span>
-                )}
-                <h3>
-                  <button
-                    className="plain-link"
-                    onClick={() => setDetail(book)}
-                  >
-                    {book.title}
-                  </button>
-                </h3>
-                <p>
-                  {book.age} · {book.condition}
-                </p>
-                <button
-                  className="text-button"
-                  onClick={() => enterShop(book.shopId)}
-                >
-                  {book.owner} · 进书屋 ›
-                </button>
-                {book.series && (
-                  <button
-                    className="series-tag"
-                    onClick={() => setSeries(book)}
-                  >
-                    ▥ {book.series.name} ›
-                  </button>
-                )}
-                <SelectBook book={book} cart={cart} />
-              </div>
-            </article>
-          ),
-        )}
+        {displayGroups.map(({ key, kind, book, rows, all }) => {
+          const isSeries = kind === "series";
+          const eligible = selectionPresentation(rows, cart.selected, cart.familyId);
+          const own = isOwnBook(book, cart.familyId);
+          const count = own ? all.filter(b => b.available).length : all.filter(b => canBorrow(b, cart.familyId)).length;
+          return <article className={`reading-card ${isSeries ? "reading-series" : ""} ${rows.some(cart.selected) ? "is-selected" : ""}`} key={key}>
+            <button className="cover-link" aria-label={`查看${isSeries ? book.series!.name : book.title}详情`}
+              onClick={() => isSeries ? setSeries(book) : setDetail(book)}>
+              <BookVisual books={rows} series={isSeries} />
+              {isSeries && <span className="series-count">系列 · {all.length}册</span>}
+              {!isSeries && (!canBorrow(book, cart.familyId) || book.nonChildren) && <span className="cover-state">{book.nonChildren ? "非儿童读物" : stateLabel(book)}</span>}
+            </button>
+            <div className="reading-card-content">
+              <h3><button className="plain-link" onClick={() => isSeries ? setSeries(book) : setDetail(book)}>{isSeries ? book.series!.name : book.title}</button></h3>
+              <p>{isSeries ? `全${all.length}册 · ${count}册${own ? "可共享" : "可借"}` : `${book.age} · ${book.condition}`}</p>
+              {isSeries && (filtering || query) && <p className="matched-count">当前符合{rows.length}册</p>}
+              <button className="book-source text-button" onClick={() => enterShop(book.shopId)}>{book.owner} ›</button>
+              {!isSeries && book.series && <button className="series-tag" onClick={() => setSeries(book)}>{book.series.name} ›</button>}
+              {isSeries ? <div className="series-buttons">
+                <SeriesSelect rows={rows} cart={cart} filtering={filtering || !!query} complete={() => setSeries(book)} />
+                <button className="text-button" onClick={() => setSeries(book)}>挑选分册{eligible.selectedCount ? ` · 已选${eligible.selectedCount}本` : ""} ›</button>
+              </div> : <SelectBook book={book} cart={cart} />}
+            </div>
+          </article>;
+        })}
       </div>
       {shopsOpen && (
         <Sheet title="逛书屋" close={() => setShopsOpen(false)}>
@@ -1057,8 +921,9 @@ export function Browse({
         <div style={detail ? { visibility: "hidden" } : undefined}>
           <Sheet
             title={series.series!.name}
+            variant="series"
             eyebrow="在当前页面，继续挑选"
-            description={`${series.owner} · 本屋这个系列共${seriesAll.length}本，${seriesAll.filter((b) => b.available).length}本可借。每本都可以单独选。`}
+            description={`${series.owner} · 本屋这个系列共${seriesAll.length}本，${seriesAll.filter(b => canBorrow(b, cart.familyId)).length}本可借。每本都可以单独选。`}
             close={() => setSeries(null)}
             footer={
               <>
@@ -1070,14 +935,14 @@ export function Browse({
               </>
             }
           >
-            <section className="series-about">
+            <div className="series-detail-layout"><aside className="series-introduction"><BookVisual books={seriesAll} series /><section className="series-about">
               <h3>关于这个系列</h3>
               <p>
                 {series.series!.summary ||
                   "书主暂未填写系列介绍。每本可单独借阅，也可以一起选择。"}
               </p>
             </section>
-            <h3>挑选分册</h3>
+            </aside><section className="series-volumes"><h3>挑选分册</h3>
             <small>点封面或书名查看详情</small>
             {seriesAll.filter(fits).map((b) => (
               <div className="volume-row" key={b.id}>
@@ -1103,12 +968,15 @@ export function Browse({
                 <SelectBook book={b} cart={cart} />
               </div>
             ))}
+            {!seriesAll.filter(fits).length && <p className="series-no-match">没有符合当前筛选条件的分册。</p>}
+            </section></div>
           </Sheet>
         </div>
       )}
       {detail && (
         <Sheet
           title={detail.title}
+          variant="book"
           close={() => setDetail(null)}
           footer={
             <>
@@ -1122,43 +990,9 @@ export function Browse({
             </>
           }
         >
-          <div className="volume-detail">
-            <Cover book={detail} />
-            <div>
-              <span
-                className={`status ${detail.available ? "available" : "unavailable"}`}
-              >
-                {stateLabel(books.find((b) => b.id === detail.id) ?? detail)}
-              </span>
-              <p>{detail.author}</p>
-              <p>
-                {detail.age} · {detail.condition}
-              </p>
-              {detail.nonChildren && (
-                <span className="non-child-badge">非儿童读物</span>
-              )}
-              <p>
-                {detail.category}
-                {detail.seriesOrder ? ` · 系列第${detail.seriesOrder}册` : ""}
-              </p>
-            </div>
-          </div>
-          {detail.series && (
-            <button
-              className="series-tag"
-              onClick={() => {
-                setSeries(detail);
-                setDetail(null);
-              }}
-            >
-              ▥ {detail.series.name} ›
-            </button>
-          )}
-          <h3>关于这本书</h3>
-          <p>{detail.summary || "书主暂未填写简介。"}</p>
-          <p className="detail-safety">
-            收到实体书后开始14天借期，书主收到归还的书后确认完成。
-          </p>
+          <BookDetails book={source.find(book => book.id === detail.id) ?? detail} familyId={cart.familyId}
+            onShop={() => { setDetail(null); setSeries(null); enterShop(detail.shopId); }}
+            onSeries={detail.series ? () => { setSeries(detail); setDetail(null); } : undefined} />
         </Sheet>
       )}
     </>
@@ -1210,7 +1044,7 @@ export function CartPanel({
             </button>
             {current && <button className="primary-button" disabled={cart.busy}
               onClick={() => void cart.submit(current)}>
-              {cart.busy ? "提交中…" : `提交申请 · ${current.books.length}本`}
+              {cart.busy ? "提交中…" : "申请借阅"}
             </button>}
           </div>
         </div>
@@ -1270,19 +1104,15 @@ export function CartPanel({
           </Sheet>
         </div>
       )}
-      {detail && cart.open && <Sheet title={detail.title}
+      {detail && cart.open && <Sheet title={detail.title} variant="book"
         eyebrow="先了解内容，再决定选不选"
         description={`${detail.owner} · 单本图书详情`}
         close={closeDetail}
         footer={<><button className="text-button" onClick={closeDetail}>‹ 返回已选清单</button>
           <SelectBook book={cart.carts.flatMap((c) => cart.currentBooks(c)).find((b) => b.id === detail.id) ?? detail} cart={cart} /></>}
       >
-        <div className="volume-detail"><Cover book={detail} /><div>
-          <p>{detail.author}</p><p>{detail.age} · {detail.condition}</p><p>{detail.category}</p>
-          {detail.series && <span className="series-tag">{detail.series.name}</span>}
-        </div></div>
-        <section className="series-about"><h3>关于这本书</h3><p>{detail.summary || "书主暂未填写简介。"}</p></section>
-        <p className="detail-safety">收到实体书后开始14天借期。</p>
+        <BookDetails book={cart.carts.flatMap(c => cart.currentBooks(c)).find(b => b.id === detail.id) ?? detail}
+          familyId={cart.familyId} />
       </Sheet>}
       {cart.success && (
         <Sheet title="申请已提交" eyebrow="已经为你预约好这些书"
@@ -1453,8 +1283,8 @@ export function GroupCard({
           </h2>
           <p>{presentation.summary}</p>
         </div>
-        <span className={`loan-state ${presentation.done ? "ended" : ""}`}>
-          {presentation.done ? "已结束" : "进行中"}
+        <span className={`loan-state ${presentation.done ? "ended" : presentation.step === 2 ? "reading" : ""}`}>
+          {presentation.done ? "已结束" : pending.length ? "待审批" : awaitingPlace.length ? "待确认地点" : receive.length ? "待取书" : loans.some(l => l.stage === "RETURN_REQUESTED") ? "待收回" : "阅读中"}
         </span>
       </div>
       <p className="loan-date">
@@ -1485,7 +1315,7 @@ export function GroupCard({
       {(!presentation.done || loans.some((l) => l.stage === "RETURNED")) && (
         <ol className="loan-progress" aria-label="借阅进度">
           {["提交申请", "确认取书", "阅读中", "归还完成"].map((label, i) => (
-            <li key={label} className={i <= presentation.step ? "reached" : ""}>
+            <li key={label} className={i < presentation.step ? "done" : i === presentation.step ? "current" : ""}>
               <span>
                 {i < presentation.step ? <LibraryIcon name="check" /> : i + 1}
               </span>
