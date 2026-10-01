@@ -32,7 +32,6 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-}
-      TEST_EMAIL_ALLOWLIST: ${TEST_EMAIL_ALLOWLIST:-}
       AI_PROVIDER: minimax
       AI_API_KEY: ${AI_API_KEY:?set AI_API_KEY}
       AI_MODEL: ${AI_MODEL:-MiniMax-M3}

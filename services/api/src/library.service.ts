@@ -133,8 +133,6 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
     requireEmailDelivery();
     const emailHash = digest(`email:${email}`);
     if (purpose === EmailCodePurpose.REGISTER) {
-      const allowlist = process.env.TEST_EMAIL_ALLOWLIST?.split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
-      if (process.env.NODE_ENV === 'production' && (!allowlist?.length || !allowlist.includes(email))) throw new ForbiddenException('测试站暂未开放注册');
       if (await this.family.findUnique({ where: { emailLookupHash: emailHash } })) throw new ConflictException('邮箱已注册');
     }
     const existing = await this.emailCode.findUnique({ where: { emailHash_purpose: { emailHash, purpose } } });
@@ -179,7 +177,7 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
     const email = emailAddress(body.email);
     const password = passwordValue(body.password);
     const nickname = body.nickname === undefined ? username : text(body.nickname, '书屋昵称', 30, true);
-    const phone = phoneNumber(body.phone);
+    const phone = body.phone === undefined ? null : phoneNumber(body.phone);
     const emailHash = digest(`email:${email}`);
     const codeHash = await this.checkEmailCode(emailHash, EmailCodePurpose.REGISTER, body.code);
     if (await this.family.findFirst({ where: { OR: [{ username }, { emailLookupHash: emailHash }] } })) throw new ConflictException('账号或邮箱已注册');
@@ -188,7 +186,7 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
     const family = await this.$transaction(async tx => {
       const consumed = await tx.emailCode.deleteMany({ where: { emailHash, purpose: EmailCodePurpose.REGISTER, codeHash, expiresAt: { gt: new Date() }, attempts: { lt: 5 } } });
       if (consumed.count !== 1) throw new UnauthorizedException('验证码已失效');
-      const created = await tx.family.create({ data: { username, emailLookupHash: emailHash, emailCiphertext: encrypt(email), phoneCiphertext: encrypt(phone), emailVerifiedAt: new Date(), passwordHash, displayName: nickname } });
+      const created = await tx.family.create({ data: { username, emailLookupHash: emailHash, emailCiphertext: encrypt(email), phoneCiphertext: phone ? encrypt(phone) : null, emailVerifiedAt: new Date(), passwordHash, displayName: nickname } });
       await tx.session.create({ data: { familyId: created.id, tokenHash: digest(token), expiresAt: new Date(Date.now() + 30 * 24 * 3600_000) } });
       return created;
     });

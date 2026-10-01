@@ -164,6 +164,12 @@ input[type="checkbox"] { accent-color: var(--green); width: 18px; height: 18px; 
 .modal-close { position: absolute; top: 12px; right: 12px; width: 44px; height: 44px; border: 0; border-radius: 50%; background: var(--surface); color: var(--muted); font-size: 24px; }
 .login-fields { display: grid; gap: 16px; margin: 24px 0; }
 .login-fields > button { width: 100%; }
+.email-code-row { display: flex; align-items: stretch; gap: 8px; }
+.email-code-row input { flex: 1; width: 0; }
+.email-code-row button { flex: none; white-space: nowrap; }
+.auth-switches { display: flex; justify-content: center; gap: 20px; }
+.auth-switches button { min-height: 44px; border: 0; padding: 0; background: none; color: var(--accent); font-size: 13px; }
+.registration-actions { margin-top: 24px; }
 .password-example, .dialog-foot { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .dialog-foot { border-top: 1px solid var(--line); padding-top: 16px; }
 .dialog-icon { width: 48px; height: 48px; display: grid; place-items: center; background: var(--accent-soft); border-radius: 12px; color: var(--accent); margin-bottom: 16px; }

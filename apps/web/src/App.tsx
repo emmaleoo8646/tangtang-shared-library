@@ -76,7 +76,7 @@ function App() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [code, setCode] = useState("");
   const [nickname, setNickname] = useState("");
-  const [registrationPhone, setRegistrationPhone] = useState("");
+  const [registrationComplete, setRegistrationComplete] = useState(false);
   const [profilePhone, setProfilePhone] = useState("");
   const [codeSent, setCodeSent] = useState(false);
   const [developmentCode, setDevelopmentCode] = useState("");
@@ -117,10 +117,9 @@ function App() {
   const pendingCount = groupLoans(todoLoans).length;
   const pendingBadge = pendingCount > 99 ? "99+" : pendingCount;
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-  const phoneValid = /^(?:1[3-9]\d{9}|\+[1-9]\d{7,14})$/.test(registrationPhone.replace(/[\s()-]/g, ""));
   const authReady = authMode === "login"
     ? Boolean(account.trim() && password)
-    : emailValid && code.length === 6 && password.length >= 10 && password === confirmPassword && (authMode === "reset" || (/^[a-zA-Z0-9_]{4,24}$/.test(account) && phoneValid));
+    : emailValid && /^\d{6}$/.test(code) && password.length >= 10 && password === confirmPassword && (authMode === "reset" || /^[a-zA-Z0-9_]{4,24}$/.test(account));
   function flash(message: string) {
     setToast(message);
     window.setTimeout(() => setToast(""), 4000);
@@ -226,8 +225,10 @@ function App() {
         switchAuthMode("login");
         return;
       }
-      if (authMode === "register") await api("/auth/register", "POST", { username: account, email, phone: registrationPhone, password, code, nickname: nickname || account });
-      else await api("/auth/login", "POST", { account, password });
+      if (authMode === "register") {
+        await api("/auth/register", "POST", { username: account, email, password, code });
+        setRegistrationComplete(true);
+      } else await api("/auth/login", "POST", { account, password });
       setLoginOpen(false);
       setPassword("");
       setConfirmPassword("");
@@ -244,6 +245,7 @@ function App() {
     await run(async () => {
       await api("/auth/logout", "POST");
       setNickname("");
+      setRegistrationComplete(false);
       setPage("discover");
     }, "已退出登录");
   }
@@ -674,7 +676,7 @@ function App() {
                   <input type="tel" autoComplete="tel" value={profilePhone} onChange={(event) => setProfilePhone(event.target.value)} placeholder="大陆手机号或带国家区号的号码" />
                 </label>
               </div>
-              {!family.phone && <p className="phone-reminder">尚未填写联系电话。旧账号可以继续使用，建议补填以便借阅交接。</p>}
+              {!family.phone && <p className="phone-reminder">请完善书屋昵称和手机号码，方便其他家庭认识你的书屋、联系借阅交接。</p>}
               <p className="phone-purpose">用于借阅交接和订单异常联系；书主同意借阅后，仅向该笔借阅双方展示，管理员可在必要时联系；不在公开书目展示，不用于营销。号码暂未短信验证。</p>
               <div className="action-row">
                 <button
@@ -864,25 +866,25 @@ function App() {
             >
               ×
             </button>
-            <p className="eyebrow">{authMode === "login" ? "家长登录" : authMode === "register" ? "注册家庭书屋" : "找回密码"}</p>
-            <h2 id="login-title">{authMode === "login" ? "欢迎回来" : authMode === "register" ? "创建共享书屋账号" : "重置登录密码"}</h2>
-            <p>{authMode === "login" ? "使用账号或已验证邮箱登录。" : authMode === "register" ? "填写账号、邮箱和密码，完成邮箱验证后即可使用。" : "向注册邮箱发送验证码，验证后设置新密码。"}</p>
+            <p className="eyebrow">{authMode === "login" ? "家长登录" : authMode === "register" ? "加入共享书屋" : "找回密码"}</p>
+            <h2 id="login-title">{authMode === "login" ? "欢迎回来" : authMode === "register" ? "创建账号" : "重置登录密码"}</h2>
+            <p>{authMode === "login" ? "使用账号或已验证邮箱登录。" : authMode === "register" ? "验证邮箱，即可开启共享阅读。" : "向注册邮箱发送验证码，验证后设置新密码。"}</p>
             <div className="login-fields">
               {authMode !== "reset" && (
                 <label>
-                  {authMode === "login" ? "账号或邮箱" : "账号（4–24 位字母、数字或下划线）"}
+                  {authMode === "login" ? "账号或邮箱" : "账号"}
                   <input
                     autoComplete="username"
                     value={account}
                     maxLength={authMode === "login" ? 254 : 24}
                     onChange={(event) => setAccount(event.target.value)}
-                    placeholder={authMode === "login" ? "请输入账号或邮箱" : "例如 tangtang_home"}
+                    placeholder={authMode === "login" ? "请输入账号或邮箱" : "4–24 位字母、数字或下划线"}
                   />
                 </label>
               )}
               {authMode !== "login" && (
                 <label>
-                  注册邮箱
+                  邮箱
                   <input
                     type="email"
                     autoComplete="email"
@@ -893,37 +895,28 @@ function App() {
                   />
                 </label>
               )}
-              {authMode === "register" && (
-                <>
-                  <label>
-                    书屋昵称
-                    <input value={nickname} maxLength={30} onChange={(event) => setNickname(event.target.value)} placeholder="例如：糖糖书屋" />
-                  </label>
-                  <label>
-                    联系电话 <b>*</b>
-                    <input type="tel" autoComplete="tel" value={registrationPhone} onChange={(event) => setRegistrationPhone(event.target.value)} placeholder="大陆手机号或 +国家区号号码" />
-                  </label>
-                  <p className="phone-purpose">用于借阅交接和订单异常联系；书主同意借阅后，仅向该笔借阅双方展示，管理员可在必要时联系；不在公开书目展示，不用于营销。注册仍使用邮箱验证码，电话暂不发送短信验证。</p>
-                </>
-              )}
               {authMode !== "login" && (
                 <>
-                  <button
-                    className="secondary-button"
-                    disabled={busy || !emailValid}
-                    onClick={sendCode}
-                  >
-                    {codeSent ? "重新发送验证邮件" : "发送邮箱验证码"}
-                  </button>
                   <label>
                     邮箱验证码
-                    <input
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      value={code}
-                      maxLength={6}
-                      onChange={(event) => setCode(event.target.value)}
-                    />
+                    <div className="email-code-row">
+                      <input
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        value={code}
+                        maxLength={6}
+                        onChange={(event) => setCode(event.target.value)}
+                        placeholder="6 位验证码"
+                      />
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={busy || !emailValid}
+                        onClick={sendCode}
+                      >
+                        {codeSent ? "重新发送" : "获取验证码"}
+                      </button>
+                    </div>
                   </label>
                   {developmentCode && (
                     <p className="dev-code">
@@ -943,7 +936,7 @@ function App() {
                   placeholder={authMode === "login" ? "请输入密码" : "至少 10 位"}
                 />
               </label>
-              {authMode !== "login" && <p className="password-example">密码至少 10 位。示例：Tangtang@2026（请勿直接使用这个示例）。</p>}
+              {authMode === "reset" && <p className="password-example">密码至少 10 位。示例：Tangtang@2026（请勿直接使用这个示例）。</p>}
               {authMode !== "login" && (
                 <label>
                   确认密码
@@ -957,17 +950,29 @@ function App() {
                 </label>
               )}
               <button className="primary-button" disabled={busy || !authReady} onClick={submitAuth}>
-                {authMode === "login" ? "登录" : authMode === "register" ? "验证邮箱并注册" : "重置密码"}
+                {authMode === "login" ? "登录" : authMode === "register" ? "注册" : "重置密码"}
               </button>
               <div className="auth-switches">
                 {authMode !== "login" && <button type="button" onClick={() => switchAuthMode("login")}>返回登录</button>}
                 {authMode !== "register" && <button type="button" onClick={() => switchAuthMode("register")}>创建账号</button>}
-                {authMode !== "reset" && <button type="button" onClick={() => switchAuthMode("reset")}>忘记密码</button>}
+                {authMode === "login" && <button type="button" onClick={() => switchAuthMode("reset")}>忘记密码</button>}
               </div>
             </div>
             <p className="dialog-foot">
               邮箱仅用于账号验证与密码找回，不会公开给其他家庭。
             </p>
+          </div>
+        </div>
+      )}
+      {registrationComplete && family && (
+        <div className="modal-backdrop">
+          <div className="login-dialog" role="dialog" aria-modal="true" aria-labelledby="registration-success-title">
+            <h2 id="registration-success-title">注册成功</h2>
+            <p>欢迎加入共享书屋！请完善书屋昵称和手机号码，方便其他家庭认识你的书屋、联系借阅交接。</p>
+            <div className="action-row registration-actions">
+              <button className="primary-button" onClick={() => { setRegistrationComplete(false); go("profile"); }}>完善资料</button>
+              <button className="secondary-button" onClick={() => setRegistrationComplete(false)}>稍后再说</button>
+            </div>
           </div>
         </div>
       )}

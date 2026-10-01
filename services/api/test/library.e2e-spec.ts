@@ -76,6 +76,25 @@ integration('two-family borrowing flow', () => {
     await request(server).post('/api/auth/password-reset').send({ email, code: resetCode.body.developmentCode, password: 'third-password-123' }).expect(401);
   });
 
+  it('registers with only account fields and lets the family complete its profile later', async () => {
+    const username = `simple_${seed}`;
+    const email = `${username}@example.test`;
+    const sent = await request(server).post('/api/auth/email-code').send({ email, purpose: 'register' }).expect(201);
+    const body = { username, email, password: 'simple-password-123', code: sent.body.developmentCode };
+    const registered = await request(server).post('/api/auth/register').send(body).expect(201);
+    const cookie = registered.headers['set-cookie'][0].split(';')[0] as string;
+    await request(server).get('/api/me').set('Cookie', cookie).expect(200).expect(({ body }) => {
+      expect(body).toMatchObject({ username, email, displayName: username, phone: '' });
+    });
+    await request(server).post('/api/auth/register').send(body).expect(401);
+    await request(server).patch('/api/me').set('Cookie', cookie).send({ displayName: '新家庭书屋', phone: '123' }).expect(400);
+    const saved = await request(server).patch('/api/me').set('Cookie', cookie).send({ displayName: '新家庭书屋', phone: '13800138000' }).expect(200);
+    expect(saved.body).toMatchObject({ displayName: '新家庭书屋', phone: '+8613800138000' });
+    await request(server).get('/api/me').set('Cookie', cookie).expect(200).expect(({ body }) => {
+      expect(body).toMatchObject({ displayName: '新家庭书屋', phone: '+8613800138000' });
+    });
+  });
+
   it('keeps old accounts without phone usable and lets them add one', async () => {
     const owner = await signIn(9, '旧账号');
     const library = app.get(LibraryService);
