@@ -1295,9 +1295,9 @@ export function GroupCard({
       {(!presentation.done || loans.some((l) => l.stage === "RETURNED")) && (
         <ol className="loan-progress" aria-label="借阅进度">
           {["提交申请", "确认取书", "阅读中", "归还完成"].map((label, i) => (
-            <li key={label} className={i < presentation.step ? "done" : i === presentation.step ? "current" : ""}>
+            <li key={label} className={i < presentation.completedSteps ? "done" : i === presentation.step ? "current" : ""}>
               <span>
-                {i < presentation.step ? <LibraryIcon name="check" /> : i + 1}
+                {i < presentation.completedSteps ? <LibraryIcon name="check" /> : i + 1}
               </span>
               <small>{label}</small>
             </li>

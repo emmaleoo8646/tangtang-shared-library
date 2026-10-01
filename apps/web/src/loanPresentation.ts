@@ -31,6 +31,7 @@ export function loanPresentation(loans: Pick<Loan, "stage" | "dueAt">[]) {
       : done
         ? 3
         : 2;
+  const completedSteps = done && counts.RETURNED ? 4 : step;
   const summary = Object.keys(loanLabels)
     .filter((stage) => counts[stage])
     .map((stage) => `${counts[stage]}本${loanLabels[stage]}`)
@@ -39,5 +40,5 @@ export function loanPresentation(loans: Pick<Loan, "stage" | "dueAt">[]) {
     .filter((l) => ["LENT", "RETURN_REQUESTED"].includes(l.stage) && l.dueAt)
     .map((l) => l.dueAt!)
     .sort();
-  return { counts, done, step, summary, nearestDueAt: dates[0] ?? null };
+  return { counts, done, step, completedSteps, summary, nearestDueAt: dates[0] ?? null };
 }

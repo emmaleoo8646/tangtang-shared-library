@@ -10,6 +10,7 @@ test("one returned volume does not complete the batch or hide the remaining due 
   ]);
   assert.equal(v.done, false);
   assert.equal(v.step, 2);
+  assert.equal(v.completedSteps, 2);
   assert.equal(v.nearestDueAt, "2026-10-14");
   assert.equal(v.summary, "1本借阅中，1本已归还，1本未同意");
 });
@@ -19,6 +20,7 @@ test("an unreceived volume keeps pickup as the next step in a mixed batch", () =
     row("LENT", "2026-10-14"),
   ]);
   assert.equal(v.step, 1);
+  assert.equal(v.completedSteps, 1);
   assert.equal(v.done, false);
   assert.equal(v.summary, "1本待取书，1本借阅中");
 });
@@ -31,10 +33,23 @@ test("ended applies to every volume, including declined, cancelled and expired o
   ]);
   assert.equal(v.done, true);
   assert.equal(v.step, 3);
+  assert.equal(v.completedSteps, 4);
   assert.equal(v.nearestDueAt, null);
 });
 test("requested and legacy approved records take precedence over reading progress", () => {
   assert.equal(loanPresentation([row("REQUESTED"), row("LENT")]).step, 0);
   assert.equal(loanPresentation([row("APPROVED"), row("LENT")]).step, 1);
   assert.equal(loanPresentation([]).done, false);
+});
+test("a fully returned loan completes all four progress icons", () => {
+  for (const loans of [[row("RETURNED")], [row("RETURNED"), row("RETURNED")]]) {
+    const v = loanPresentation(loans);
+    assert.equal(v.done, true);
+    assert.equal(v.completedSteps, 4);
+  }
+});
+test("an ended request without returns does not complete the return progress icon", () => {
+  const v = loanPresentation([row("REJECTED"), row("CANCELLED"), row("EXPIRED")]);
+  assert.equal(v.done, true);
+  assert.equal(v.completedSteps, 3);
 });
