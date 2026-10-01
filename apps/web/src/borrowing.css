@@ -38,7 +38,9 @@
 .shortcut-info b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; font-weight:500; }
 .shortcut-info small { font-size:11px; color:var(--muted); }
 .shop-shortcuts-list .library-icon { display:none; }
-.reading-grid, .shop-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }
+.reading-grid, .shop-grid { display:grid; gap:16px; }
+.reading-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
+.shop-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
 .reading-card { position:relative; display:flex; flex-direction:column; min-width:0; padding:10px; border:1px solid var(--line); border-radius:var(--radius); background:#fff; }
 .reading-card.is-selected { border-color:var(--green); box-shadow:0 0 0 1px var(--green); }
 .cover-link { position:relative; display:block; flex:none; padding:0; width:100%; background:none; border:0; text-align:left; }
@@ -66,8 +68,9 @@
 .book-selection-control button { min-width:44px; min-height:44px; padding:0; border:0; border-right:1px solid #c3d7c9; background:none; color:inherit; font-size:22px; }
 .book-selection-control > span { display:inline-flex; align-items:center; justify-content:center; gap:4px; flex:1; padding:0 8px; white-space:nowrap; font-size:13px; }
 .book-selection-control .library-icon { width:15px; height:15px; }
-.series-buttons { display:grid; gap:0; width:100%; margin-top:auto; }
-.series-buttons .text-button { color:var(--muted); font-size:12px; }
+.series-buttons { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); align-items:stretch; gap:8px; width:100%; margin-top:auto; }
+.series-buttons > button { min-width:0; min-height:44px; padding:0 4px; overflow-wrap:anywhere; }
+.series-buttons .text-button { color:var(--muted); font-size:12px; line-height:1.4; }
 .series-tag { display:inline-flex; align-self:flex-start; max-width:100%; min-height:44px; padding:8px 0; border:0; background:none; color:var(--accent); font-size:12px; text-align:left; overflow-wrap:anywhere; }
 .series-tag:disabled { color:var(--muted); opacity:1; }
 
@@ -243,6 +246,9 @@
 .pick-loan input { margin:0; }
 .pick-loan span { min-width:0; }
 
+@media (max-width:1200px) {
+  .reading-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
+}
 @media (max-width:1000px) {
   .reading-grid, .shop-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .loan-list { grid-template-columns:1fr; }
@@ -286,6 +292,8 @@
   .reading-card-content > .book-source { font-size:12px; }
   .series-count, .cover-state { bottom:6px; left:6px; font-size:11px; padding:3px 6px; }
   .select-book { font-size:12px; padding:8px 6px; }
+  .series-buttons { gap:4px; }
+  .series-buttons > button { padding:0 2px; }
   .series-buttons .text-button { font-size:11px; }
   .book-selection-control > span { font-size:12px; padding:0 4px; gap:2px; }
   .book-selection-control .library-icon { width:13px; height:13px; }
