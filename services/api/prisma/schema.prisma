@@ -71,6 +71,9 @@ model Family {
   emailVerifiedAt DateTime?
   passwordHash    String?
   displayName     String
+  avatarData      Bytes?
+  avatarMimeType  String?
+  avatarUpdatedAt DateTime?
   status          FamilyStatus   @default(ACTIVE)
   children        ChildProfile[]
   books           Book[]

@@ -6,8 +6,15 @@ import { BookStatus, EmailCodePurpose, OptionKind, Prisma, PrismaClient } from '
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomInt, scrypt, timingSafeEqual } from 'node:crypto';
 import { requireEmailDelivery, sendAccountCode } from './email.js';
 import { decodeCover, recognizeCover, summarizeBook } from './book-assist.js';
+import { decodeImage } from './image.js';
 
-const bookInclude = { series: true, ownerFamily: { select: { displayName: true } }, categoryOption: true, ageOption: true, conditionOption: true } as const;
+const avatarSelect = { avatarMimeType: true, avatarUpdatedAt: true, status: true } as const;
+function avatarUrl(id: string, family: { avatarMimeType: string | null; avatarUpdatedAt: Date | null; status: string }) {
+  return family.status === 'ACTIVE' && family.avatarMimeType && family.avatarUpdatedAt
+    ? `/api/shops/${id}/avatar?v=${family.avatarUpdatedAt.getTime()}` : null;
+}
+
+const bookInclude = { series: true, ownerFamily: { select: { displayName: true, ...avatarSelect } }, categoryOption: true, ageOption: true, conditionOption: true } as const;
 type BookRow = Omit<Prisma.BookGetPayload<{ include: typeof bookInclude }>, 'coverData'>;
 
 function text(value: unknown, name: string, max: number, required = false) {
@@ -101,7 +108,7 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
   }
 
   private sessionModelFind(tokenHash: string) {
-    return this.session.findUnique({ where: { tokenHash }, include: { family: true } });
+    return this.session.findUnique({ where: { tokenHash }, include: { family: { omit: { avatarData: true } } } });
   }
 
   requireFamily(family: Awaited<ReturnType<LibraryService['getFamily']>>) {
@@ -133,7 +140,7 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
     requireEmailDelivery();
     const emailHash = digest(`email:${email}`);
     if (purpose === EmailCodePurpose.REGISTER) {
-      if (await this.family.findUnique({ where: { emailLookupHash: emailHash } })) throw new ConflictException('邮箱已注册');
+      if (await this.family.findUnique({ where: { emailLookupHash: emailHash }, omit: { avatarData: true } })) throw new ConflictException('邮箱已注册');
     }
     const existing = await this.emailCode.findUnique({ where: { emailHash_purpose: { emailHash, purpose } } });
     const now = new Date();
@@ -148,7 +155,7 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
       create: { emailHash, purpose, codeHash, expiresAt: new Date(now.getTime() + 10 * 60_000) },
       update: { codeHash, expiresAt: new Date(now.getTime() + 10 * 60_000), attempts: 0, sentAt: now, sendCount: recent ? { increment: 1 } : 1, windowStart: recent ? undefined : now },
     });
-    const recipientExists = purpose === EmailCodePurpose.REGISTER || Boolean(await this.family.findUnique({ where: { emailLookupHash: emailHash } }));
+    const recipientExists = purpose === EmailCodePurpose.REGISTER || Boolean(await this.family.findUnique({ where: { emailLookupHash: emailHash }, omit: { avatarData: true } }));
     if (recipientExists) {
       try { await sendAccountCode(email, code, purpose); }
       catch {
@@ -180,17 +187,17 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
     const phone = body.phone === undefined ? null : phoneNumber(body.phone);
     const emailHash = digest(`email:${email}`);
     const codeHash = await this.checkEmailCode(emailHash, EmailCodePurpose.REGISTER, body.code);
-    if (await this.family.findFirst({ where: { OR: [{ username }, { emailLookupHash: emailHash }] } })) throw new ConflictException('账号或邮箱已注册');
+    if (await this.family.findFirst({ where: { OR: [{ username }, { emailLookupHash: emailHash }] }, omit: { avatarData: true } })) throw new ConflictException('账号或邮箱已注册');
     const passwordHash = await hashPassword(password);
     const token = randomBytes(32).toString('hex');
     const family = await this.$transaction(async tx => {
       const consumed = await tx.emailCode.deleteMany({ where: { emailHash, purpose: EmailCodePurpose.REGISTER, codeHash, expiresAt: { gt: new Date() }, attempts: { lt: 5 } } });
       if (consumed.count !== 1) throw new UnauthorizedException('验证码已失效');
-      const created = await tx.family.create({ data: { username, emailLookupHash: emailHash, emailCiphertext: encrypt(email), phoneCiphertext: phone ? encrypt(phone) : null, emailVerifiedAt: new Date(), passwordHash, displayName: nickname } });
+      const created = await tx.family.create({ data: { username, emailLookupHash: emailHash, emailCiphertext: encrypt(email), phoneCiphertext: phone ? encrypt(phone) : null, emailVerifiedAt: new Date(), passwordHash, displayName: nickname }, omit: { avatarData: true } });
       await tx.session.create({ data: { familyId: created.id, tokenHash: digest(token), expiresAt: new Date(Date.now() + 30 * 24 * 3600_000) } });
       return created;
     });
-    return { token, family: { id: family.id, displayName: family.displayName } };
+    return { token, family: { id: family.id, displayName: family.displayName, avatarUrl: avatarUrl(family.id, family) } };
   }
 
   async login(body: Record<string, unknown>) {
@@ -200,8 +207,8 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
     const throttle = await this.authThrottle.findUnique({ where: { identifierHash: key } });
     if (throttle?.blockedUntil && throttle.blockedUntil > new Date()) throw new UnauthorizedException('账号或密码不正确，请稍后重试');
     const family = account.includes('@')
-      ? await this.family.findUnique({ where: { emailLookupHash: digest(`email:${account}`) } })
-      : await this.family.findUnique({ where: { username: account } });
+      ? await this.family.findUnique({ where: { emailLookupHash: digest(`email:${account}`) }, omit: { avatarData: true } })
+      : await this.family.findUnique({ where: { username: account }, omit: { avatarData: true } });
     const valid = await matchesPassword(password, family?.passwordHash ?? null);
     if (!valid || !family || family.status !== 'ACTIVE' || !family.emailVerifiedAt) {
       const now = new Date();
@@ -213,7 +220,7 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
     await this.authThrottle.deleteMany({ where: { identifierHash: key } });
     const token = randomBytes(32).toString('hex');
     await this.session.create({ data: { familyId: family.id, tokenHash: digest(token), expiresAt: new Date(Date.now() + 30 * 24 * 3600_000) } });
-    return { token, family: { id: family.id, displayName: family.displayName } };
+    return { token, family: { id: family.id, displayName: family.displayName, avatarUrl: avatarUrl(family.id, family) } };
   }
 
   async resetPassword(body: Record<string, unknown>) {
@@ -221,13 +228,13 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
     const password = passwordValue(body.password);
     const emailHash = digest(`email:${email}`);
     const codeHash = await this.checkEmailCode(emailHash, EmailCodePurpose.RESET, body.code);
-    const family = await this.family.findUnique({ where: { emailLookupHash: emailHash } });
+    const family = await this.family.findUnique({ where: { emailLookupHash: emailHash }, omit: { avatarData: true } });
     if (!family || family.status !== 'ACTIVE') throw new UnauthorizedException('验证码已失效');
     const passwordHash = await hashPassword(password);
     await this.$transaction(async tx => {
       const consumed = await tx.emailCode.deleteMany({ where: { emailHash, purpose: EmailCodePurpose.RESET, codeHash, expiresAt: { gt: new Date() }, attempts: { lt: 5 } } });
       if (consumed.count !== 1) throw new UnauthorizedException('验证码已失效');
-      await tx.family.update({ where: { id: family.id }, data: { passwordHash } });
+      await tx.family.update({ where: { id: family.id }, data: { passwordHash }, select: { id: true } });
       await tx.session.deleteMany({ where: { familyId: family.id } });
     });
     return { ok: true };
@@ -238,14 +245,18 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
   }
 
   async me(familyId: string) {
-    const family = await this.family.findUniqueOrThrow({ where: { id: familyId }, include: { children: { include: { ageOption: true } } } });
-    return { id: family.id, username: family.username, email: decrypt(family.emailCiphertext), phone: decrypt(family.phoneCiphertext), phoneVerified: false, displayName: family.displayName, children: family.children.map(child => ({ id: child.id, nickname: child.nickname, age: child.ageOption.label, ageOptionId: child.ageOptionId, readingPreferences: child.readingPreferences })) };
+    const family = await this.family.findUniqueOrThrow({ where: { id: familyId }, omit: { avatarData: true }, include: { children: { include: { ageOption: true } } } });
+    return { id: family.id, username: family.username, email: decrypt(family.emailCiphertext), phone: decrypt(family.phoneCiphertext), phoneVerified: false, displayName: family.displayName, avatarUrl: avatarUrl(family.id, family), children: family.children.map(child => ({ id: child.id, nickname: child.nickname, age: child.ageOption.label, ageOptionId: child.ageOptionId, readingPreferences: child.readingPreferences })) };
   }
 
   async updateMe(familyId: string, body: Record<string, unknown>) {
     const displayName = text(body.displayName, '书屋昵称', 30, true);
     const phoneCiphertext = body.phone === undefined ? undefined : encrypt(phoneNumber(body.phone));
-    await this.family.update({ where: { id: familyId }, data: { displayName, phoneCiphertext } });
+    const avatar = body.avatarImage === undefined || body.avatarImage === null ? null : await decodeImage(body.avatarImage, '头像', true);
+    await this.family.update({ where: { id: familyId }, data: { displayName, phoneCiphertext,
+      ...(body.avatarImage === null ? { avatarData: null, avatarMimeType: null, avatarUpdatedAt: null } :
+        avatar ? { avatarData: avatar.data, avatarMimeType: avatar.mimeType, avatarUpdatedAt: new Date() } : {}),
+    }, select: { id: true } });
     return this.me(familyId);
   }
 
@@ -270,7 +281,7 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
       await tx.book.updateMany({ where: { ownerFamilyId: familyId }, data: { status: 'OFF_SHELF' } });
       await tx.childProfile.deleteMany({ where: { familyId } });
       await tx.session.deleteMany({ where: { familyId } });
-      await tx.family.update({ where: { id: familyId }, data: { status: 'CLOSED', phoneLookupHash: null, phoneCiphertext: null, username: null, emailLookupHash: null, emailCiphertext: null, emailVerifiedAt: null, passwordHash: null, displayName: '已注销书屋' } });
+      await tx.family.update({ where: { id: familyId }, data: { status: 'CLOSED', phoneLookupHash: null, phoneCiphertext: null, username: null, emailLookupHash: null, emailCiphertext: null, emailVerifiedAt: null, passwordHash: null, avatarData: null, avatarMimeType: null, avatarUpdatedAt: null, displayName: '已注销书屋' }, select: { id: true } });
     });
     return { ok: true };
   }
@@ -291,9 +302,15 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
   }
 
   async shop(id: string) {
-    const shop = await this.family.findFirst({ where: { id, status: 'ACTIVE' }, select: { id: true, displayName: true } });
+    const shop = await this.family.findFirst({ where: { id, status: 'ACTIVE' }, select: { id: true, displayName: true, ...avatarSelect } });
     if (!shop) throw new NotFoundException('书屋不存在');
-    return shop;
+    return { id: shop.id, displayName: shop.displayName, avatarUrl: avatarUrl(shop.id, shop) };
+  }
+
+  async avatar(id: string) {
+    const family = await this.family.findFirst({ where: { id, status: 'ACTIVE' }, select: { avatarData: true, avatarMimeType: true } });
+    if (!family?.avatarData || !family.avatarMimeType) throw new NotFoundException('头像不存在');
+    return { mimeType: family.avatarMimeType, data: Buffer.from(family.avatarData) };
   }
 
   async shopBooks(id: string, query: Record<string, string> = {}, familyId?: string) {
@@ -341,7 +358,7 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
   }
 
   private bookView(row: BookRow, familyId?: string) {
-    return { id: row.id, shopId: row.ownerFamilyId, series: row.series ? { id: row.series.id, name: row.series.name, summary: row.series.summary } : null, seriesOrder: row.seriesOrder, status: row.status, title: row.title, author: row.author ?? '', category: row.categoryOption?.label ?? '其他', categoryOptionId: row.categoryOptionId, age: row.ageOption?.label ?? '待确认', ageOptionId: row.ageOptionId, condition: row.conditionOption.label, conditionOptionId: row.conditionOptionId, owner: row.ownerFamily.displayName, summary: row.summary ?? '', nonChildren: row.nonChildren, coverUrl: row.coverMimeType ? `/api/books/${row.id}/cover?v=${row.updatedAt.getTime()}` : null, available: row.status === 'AVAILABLE', offShelf: row.status === 'OFF_SHELF', editable: row.ownerFamilyId === familyId && ['AVAILABLE', 'OFF_SHELF'].includes(row.status), mine: row.ownerFamilyId === familyId, tone: 'mint' };
+    return { id: row.id, shopId: row.ownerFamilyId, series: row.series ? { id: row.series.id, name: row.series.name, summary: row.series.summary } : null, seriesOrder: row.seriesOrder, status: row.status, title: row.title, author: row.author ?? '', category: row.categoryOption?.label ?? '其他', categoryOptionId: row.categoryOptionId, age: row.ageOption?.label ?? '待确认', ageOptionId: row.ageOptionId, condition: row.conditionOption.label, conditionOptionId: row.conditionOptionId, owner: row.ownerFamily.displayName, ownerAvatarUrl: avatarUrl(row.ownerFamilyId, row.ownerFamily), summary: row.summary ?? '', nonChildren: row.nonChildren, coverUrl: row.coverMimeType ? `/api/books/${row.id}/cover?v=${row.updatedAt.getTime()}` : null, available: row.status === 'AVAILABLE', offShelf: row.status === 'OFF_SHELF', editable: row.ownerFamilyId === familyId && ['AVAILABLE', 'OFF_SHELF'].includes(row.status), mine: row.ownerFamilyId === familyId, tone: 'mint' };
   }
 
   async cover(bookId: string, familyId?: string) {
@@ -411,8 +428,8 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
 
   async loans(familyId: string) {
     await this.expireRequests();
-    const rows = await this.loan.findMany({ where: { OR: [{ ownerFamilyId: familyId }, { borrowerFamilyId: familyId }] }, include: { group: true, book: { select: { title: true } }, ownerFamily: { select: { displayName: true, phoneCiphertext: true } }, borrowerFamily: { select: { displayName: true, phoneCiphertext: true } } }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }] });
-    return rows.map(row => ({ id: row.id, groupId: row.groupId, message: row.group?.message ?? '', bookId: row.bookId, bookTitle: row.book.title, owner: row.ownerFamily.displayName, borrower: row.borrowerFamily.displayName, isOwner: row.ownerFamilyId === familyId, stage: row.status, place: decrypt(row.handoffDetailsCiphertext), contactPhone: ['HANDOFF_AGREED', 'LENT', 'RETURN_REQUESTED'].includes(row.status) ? decrypt(row.ownerFamilyId === familyId ? row.borrowerFamily.phoneCiphertext : row.ownerFamily.phoneCiphertext) : null, borrowerLoanConfirmed: !!row.borrowerLentConfirmedAt, ownerLoanConfirmed: !!row.ownerLentConfirmedAt, borrowerReturnConfirmed: !!row.borrowerReturnConfirmedAt, ownerReturnConfirmed: !!row.ownerReturnConfirmedAt, renewalRequested: !!row.renewalRequestedAt, renewed: !!row.renewedAt, dueAt: row.dueAt?.toISOString() ?? null, requestedAt: row.requestedAt.toISOString(), approvedAt: row.approvedAt?.toISOString() ?? null, lentAt: row.lentAt?.toISOString() ?? null, returnedAt: row.returnedAt?.toISOString() ?? null }));
+    const rows = await this.loan.findMany({ where: { OR: [{ ownerFamilyId: familyId }, { borrowerFamilyId: familyId }] }, include: { group: true, book: { select: { title: true } }, ownerFamily: { select: { displayName: true, phoneCiphertext: true, ...avatarSelect } }, borrowerFamily: { select: { displayName: true, phoneCiphertext: true, ...avatarSelect } } }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }] });
+    return rows.map(row => ({ id: row.id, groupId: row.groupId, message: row.group?.message ?? '', bookId: row.bookId, bookTitle: row.book.title, owner: row.ownerFamily.displayName, borrower: row.borrowerFamily.displayName, ownerAvatarUrl: avatarUrl(row.ownerFamilyId, row.ownerFamily), borrowerAvatarUrl: avatarUrl(row.borrowerFamilyId, row.borrowerFamily), isOwner: row.ownerFamilyId === familyId, stage: row.status, place: decrypt(row.handoffDetailsCiphertext), contactPhone: ['HANDOFF_AGREED', 'LENT', 'RETURN_REQUESTED'].includes(row.status) ? decrypt(row.ownerFamilyId === familyId ? row.borrowerFamily.phoneCiphertext : row.ownerFamily.phoneCiphertext) : null, borrowerLoanConfirmed: !!row.borrowerLentConfirmedAt, ownerLoanConfirmed: !!row.ownerLentConfirmedAt, borrowerReturnConfirmed: !!row.borrowerReturnConfirmedAt, ownerReturnConfirmed: !!row.ownerReturnConfirmedAt, renewalRequested: !!row.renewalRequestedAt, renewed: !!row.renewedAt, dueAt: row.dueAt?.toISOString() ?? null, requestedAt: row.requestedAt.toISOString(), approvedAt: row.approvedAt?.toISOString() ?? null, lentAt: row.lentAt?.toISOString() ?? null, returnedAt: row.returnedAt?.toISOString() ?? null }));
   }
 
   async apply(familyId: string, bookId: string) {
@@ -442,7 +459,7 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
         if (existing.requestFingerprint !== fingerprint) throw new ConflictException('请求编号已用于另一份申请');
         return { id: existing.id };
       }
-      const shop = await tx.family.findFirst({ where: { id: shopId, status: 'ACTIVE' } });
+      const shop = await tx.family.findFirst({ where: { id: shopId, status: 'ACTIVE' }, select: { id: true } });
       if (!shop) throw new NotFoundException('书屋不存在');
       const rows = await tx.book.findMany({ where: { id: { in: ids } }, select: { id: true, ownerFamilyId: true, status: true } });
       if (rows.length !== ids.length || rows.some(row => row.ownerFamilyId !== shopId)) throw new BadRequestException('一次只能申请同一家书屋的图书');
@@ -626,7 +643,7 @@ export class LibraryService extends PrismaClient implements OnModuleInit, OnModu
     if (!Number.isInteger(page)) throw new BadRequestException('页码不正确');
     const [total, rows] = await Promise.all([
       this.family.count(),
-      this.family.findMany({ orderBy: { createdAt: 'desc' }, skip: (page - 1) * 20, take: 20, include: { _count: { select: { books: true, borrowedLoans: true, ownedLoans: true } } } }),
+      this.family.findMany({ orderBy: { createdAt: 'desc' }, skip: (page - 1) * 20, take: 20, omit: { avatarData: true }, include: { _count: { select: { books: true, borrowedLoans: true, ownedLoans: true } } } }),
     ]);
     return { total, page, users: rows.map(row => ({ id: row.id, username: row.username, email: decrypt(row.emailCiphertext), displayName: row.displayName, status: row.status, createdAt: row.createdAt.toISOString(), phoneMasked: row.phoneCiphertext ? `${decrypt(row.phoneCiphertext).slice(0, 3)}••••${decrypt(row.phoneCiphertext).slice(-4)}` : '', phoneVerified: false, books: row._count.books, borrowed: row._count.borrowedLoans, lent: row._count.ownedLoans })) };
   }

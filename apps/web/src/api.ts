@@ -13,6 +13,7 @@ export type Book = {
   condition: string;
   conditionOptionId: string;
   owner: string;
+  ownerAvatarUrl?: string | null;
   summary: string;
   nonChildren: boolean;
   coverUrl: string | null;
@@ -29,7 +30,9 @@ export type Loan = {
   bookId: string;
   bookTitle: string;
   owner: string;
+  ownerAvatarUrl?: string | null;
   borrower: string;
+  borrowerAvatarUrl?: string | null;
   isOwner: boolean;
   stage: string;
   place: string;
@@ -53,6 +56,7 @@ export type Family = {
   phone: string;
   phoneVerified: boolean;
   displayName: string;
+  avatarUrl: string | null;
   children: {
     id: string;
     nickname: string;

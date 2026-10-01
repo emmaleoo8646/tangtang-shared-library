@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { Book } from "../api";
 const palettes = [
   ["#d9e7ca", "#405d3b", "#819c64"],
@@ -11,12 +12,14 @@ export function SharedBookCover({
 }: {
   book: Pick<Book, "id" | "title" | "coverUrl">;
 }) {
-  if (book.coverUrl)
+  const [failed, setFailed] = useState<string | null>(null);
+  if (book.coverUrl && failed !== book.coverUrl)
     return (
       <img
         className="borrow-cover"
         src={book.coverUrl}
         alt={`${book.title}封面`}
+        onError={() => setFailed(book.coverUrl)}
       />
     );
   const hash = [...book.title].reduce((n, c) => n + c.codePointAt(0)!, 0);
@@ -27,12 +30,12 @@ export function SharedBookCover({
       chars.slice(8, 16).join("") + (chars.length > 16 ? "…" : ""),
     ].filter(Boolean);
   return (
-    <div
+    <svg
+      width="110" height="150" viewBox="0 0 110 150"
       className="borrow-cover illustrated-cover"
       role="img"
       aria-label={`${book.title}，暂无封面照片`}
     >
-      <svg viewBox="0 0 110 150" aria-hidden="true">
         <rect width="110" height="150" fill={bg} />
         <path d="M5 0v150" stroke={ink} opacity=".1" strokeWidth="3" />
         <text
@@ -73,7 +76,6 @@ export function SharedBookCover({
         >
           一个故事，另一位小读者
         </text>
-      </svg>
-    </div>
+    </svg>
   );
 }

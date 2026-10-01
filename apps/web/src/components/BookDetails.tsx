@@ -1,5 +1,6 @@
 import type { Book } from "../api";
 import { canBorrow, isOwnBook, shelfLabel } from "../catalogPresentation";
+import { FamilyAvatar } from "./FamilyAvatar";
 import { BookVisual } from "./BookVisual";
 
 export function BookDetails({ book, familyId, onShop, onSeries, actions }: {
@@ -24,7 +25,7 @@ export function BookDetails({ book, familyId, onShop, onSeries, actions }: {
         {book.series.name}{book.seriesOrder ? ` · 第${book.seriesOrder}册` : ""}{onSeries ? " ›" : ""}
       </button>}
       {onShop && <button className="detail-owner" onClick={onShop}>
-        <span className="shop-avatar" aria-hidden="true">{book.owner.slice(0, 1)}</span>
+        <FamilyAvatar name={book.owner} src={book.ownerAvatarUrl} decorative />
         <span><strong>{book.owner}</strong><small>来自这家书屋</small></span>
         <span className="detail-owner-link">进书屋 ›</span>
       </button>}

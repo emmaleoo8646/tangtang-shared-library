@@ -57,7 +57,7 @@ describe('public registration', () => {
     const { service, emailCode, family, session } = setup();
     setCode(emailCode);
     const result = await service.register({ ...account, code: '123456' });
-    expect(result.family).toEqual({ id: 'family-id', displayName: account.username });
+    expect(result.family).toEqual({ id: 'family-id', displayName: account.username, avatarUrl: null });
     expect(result.token).toMatch(/^[a-f0-9]{64}$/);
     const data = family.create.mock.calls[0][0].data;
     expect(data.phoneCiphertext).toBeNull();

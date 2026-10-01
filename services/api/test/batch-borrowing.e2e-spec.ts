@@ -296,7 +296,7 @@ integration('atomic same-shop batches and series', () => {
     const shop = await request(server)
       .get(`/api/shops/${owner.id}`)
       .expect(200);
-    expect(Object.keys(shop.body).sort()).toEqual(['displayName', 'id']);
+    expect(Object.keys(shop.body).sort()).toEqual(['avatarUrl', 'displayName', 'id']);
     await request(server)
       .get(`/api/shops/${owner.id}/books?page=0`)
       .expect(400);

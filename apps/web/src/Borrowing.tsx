@@ -14,6 +14,7 @@ import { loanPresentation } from "./loanPresentation";
 import { selectionPresentation } from "./selectionPresentation";
 import { canBorrow, groupCatalog, isOwnBook, matchesCatalog, sortVolumes } from "./catalogPresentation";
 import { BookVisual } from "./components/BookVisual";
+import { FamilyAvatar } from "./components/FamilyAvatar";
 import { BookDetails } from "./components/BookDetails";
 import type { ReactNode } from "react";
 
@@ -538,7 +539,7 @@ export function Shops({
                 onClick={() => enterShop(b.shopId)}
               >
                 <div className="shop-card-heading">
-                  <span className="shop-avatar">{b.owner.slice(0, 1)}</span>
+                  <FamilyAvatar name={b.owner} src={b.ownerAvatarUrl} decorative />
                   <div>
                     <h2>{b.owner}</h2>
                     <p>
@@ -574,11 +575,13 @@ export function Browse({
   options,
   cart,
   onShopChange,
+  onBrowseShops,
 }: {
   books: Book[];
   options: OptionLists;
   cart: BorrowCart;
   onShopChange: (id: string) => void;
+  onBrowseShops: () => void;
 }) {
   const saved = useMemo(() => {
     try {
@@ -593,7 +596,7 @@ export function Browse({
   const [shopId, setShopId] = useState(
     new URLSearchParams(location.search).get("shop") || "",
   );
-  const [shop, setShop] = useState<{ id: string; displayName: string } | null>(
+  const [shop, setShop] = useState<{ id: string; displayName: string; avatarUrl: string | null } | null>(
     null,
   );
   const [shopBooks, setShopBooks] = useState<Book[]>([]);
@@ -616,7 +619,6 @@ export function Browse({
   useEffect(() => {
     onShopChange(shopId);
   }, [shopId, onShopChange]);
-  const [shopsOpen, setShopsOpen] = useState(false);
   const scroll = useRef<number>(saved.scroll || 0);
   useEffect(() => {
     const restoreY = scroll.current;
@@ -661,7 +663,7 @@ export function Browse({
     setLoading(true);
     setError("");
     Promise.all([
-      api<{ id: string; displayName: string }>(`/shops/${shopId}`),
+      api<{ id: string; displayName: string; avatarUrl: string | null }>(`/shops/${shopId}`),
       allBooks(`/shops/${shopId}/books`),
     ])
       .then(([s, rows]) => {
@@ -700,7 +702,6 @@ export function Browse({
     setCategory("全部");
     setOnlyAvailable(false);
     scroll.current = 0;
-    setShopsOpen(false);
     history.pushState(null, "", id ? `/?shop=${encodeURIComponent(id)}` : "/");
     window.scrollTo(0, 0);
   }
@@ -719,7 +720,7 @@ export function Browse({
     ...new Map(
       books
         .filter((b) => !b.offShelf)
-        .map((b) => [b.shopId, { id: b.shopId, owner: b.owner }]),
+        .map((b) => [b.shopId, { id: b.shopId, owner: b.owner, avatarUrl: b.ownerAvatarUrl }]),
     ).values(),
   ];
   return (
@@ -733,9 +734,7 @@ export function Browse({
             ‹ 返回找书
           </button>
           <div className="shop-banner-heading">
-            <span className="shop-avatar">
-              {(shop?.displayName || "书").slice(0, 1)}
-            </span>
+            <FamilyAvatar name={shop?.displayName || "书"} src={shop?.avatarUrl} decorative />
             <div>
               <p className="eyebrow">欢迎来我家书屋</p>
               <h1>{shop?.displayName || "家庭书屋"}</h1>
@@ -836,12 +835,12 @@ export function Browse({
       {!shopId && (
           <section className="shop-shortcuts" aria-label="推荐书屋">
             <div className="shop-shortcuts-heading"><h2>逛逛小书屋</h2>
-              <button className="text-button" onClick={() => setShopsOpen(true)}>更多书屋 ›</button>
+              <button className="text-button" onClick={onBrowseShops}>更多书屋 ›</button>
             </div>
             <div className="shop-shortcuts-list">
             {shops.slice(0, 4).map((s) => (
               <button key={s.id} aria-label={`进入${s.owner}`} onClick={() => enterShop(s.id)}>
-                <span className="shop-avatar" aria-hidden="true">{s.owner.slice(0, 1)}</span>
+                <FamilyAvatar name={s.owner} src={s.avatarUrl} decorative />
                 <span className="shortcut-info"><b>{s.owner}</b><small>
                   {books.filter(b => b.shopId === s.id && canBorrow(b, cart.familyId)).length}本可借 · {books.filter((b) => b.shopId === s.id && !b.offShelf).length}本藏书
                 </small></span>
@@ -900,23 +899,6 @@ export function Browse({
           </article>;
         })}
       </div>
-      {shopsOpen && (
-        <Sheet title="逛书屋" close={() => setShopsOpen(false)}>
-          {shops.map((s) => (
-            <button
-              key={s.id}
-              className="shop-entry"
-              onClick={() => enterShop(s.id)}
-            >
-              <strong>{s.owner}</strong>
-              <span>
-                {books.filter((b) => b.shopId === s.id && !b.offShelf).length}
-                本公开藏书 ›
-              </span>
-            </button>
-          ))}
-        </Sheet>
-      )}
       {series && (
         <div style={detail ? { visibility: "hidden" } : undefined}>
           <Sheet
@@ -1063,7 +1045,7 @@ export function CartPanel({
             {cart.carts.map((c) => (
               <section className="cart-group" key={c.shopId}>
                 <div className="cart-group-heading">
-                  <span className="shop-avatar">{c.owner.slice(0, 1)}</span>
+                  <FamilyAvatar name={c.owner} src={cart.currentBooks(c)[0]?.ownerAvatarUrl} decorative />
                   <h3>{c.owner}</h3><span className="cart-count">已选{c.books.length}本</span>
                 </div>
                 {cart.currentBooks(c).map((b) => (
@@ -1271,9 +1253,7 @@ export function GroupCard({
   return (
     <article className="loan-group-card">
       <div className="loan-group-heading">
-        <span className="shop-avatar">
-          {(first.isOwner ? first.borrower : first.owner).slice(0, 1)}
-        </span>
+        <FamilyAvatar name={first.isOwner ? first.borrower : first.owner} src={first.isOwner ? first.borrowerAvatarUrl : first.ownerAvatarUrl} decorative />
         <div>
           <h2>
             {first.isOwner

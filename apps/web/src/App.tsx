@@ -6,6 +6,7 @@ import { loanPresentation } from "./loanPresentation";
 import { CoverCropDialog } from "./CoverCropDialog";
 import { AiBusyNote } from "./components/AiBusyNote";
 import { OwnBooks } from "./OwnBooks";
+import { FamilyAvatar } from "./components/FamilyAvatar";
 import { BookDetails } from "./components/BookDetails";
 
 type Page = "discover" | "shops" | "detail" | "publish" | "tasks" | "library" | "profile";
@@ -77,6 +78,13 @@ function App() {
   const [code, setCode] = useState("");
   const [nickname, setNickname] = useState("");
   const [registrationComplete, setRegistrationComplete] = useState(false);
+  const [avatarImage, setAvatarImage] = useState("");
+  const [avatarChanged, setAvatarChanged] = useState(false);
+  const [avatarBytes, setAvatarBytes] = useState(0);
+  const [pendingAvatar, setPendingAvatar] = useState<File | null>(null);
+  const [avatarLoading, setAvatarLoading] = useState(false);
+  const avatarInput = useRef<HTMLInputElement>(null);
+  const avatarRequest = useRef(0);
   const [profilePhone, setProfilePhone] = useState("");
   const [codeSent, setCodeSent] = useState(false);
   const [developmentCode, setDevelopmentCode] = useState("");
@@ -151,6 +159,13 @@ function App() {
     }, 20000);
     return () => window.clearInterval(timer);
   }, [family?.id]);
+  useEffect(() => {
+    avatarRequest.current++;
+    setAvatarLoading(false); setPendingAvatar(null);
+    if (page !== "profile" || !family) return;
+    setProfilePhone(family.phone); setNickname(family.displayName);
+    setAvatarImage(family.avatarUrl || ""); setAvatarChanged(false); setAvatarBytes(0);
+  }, [page, family?.id]);
   function go(target: Page) {
     if (target !== "discover" && target !== "shops" && target !== "detail" && !family) {
       setRequestedPage(target);
@@ -170,7 +185,13 @@ function App() {
       setCondition(current => currentOptionsFallback(current, options.conditions, "condition-like-new"));
       setPrivacyConfirmed(false); setRecognizeNotice(""); setSummarizeNotice(""); setSummarySources([]);
     }
-    if (target === "profile" && family) { setProfilePhone(family.phone); setNickname(family.displayName); }
+    avatarRequest.current++;
+    setAvatarLoading(false);
+    setPendingAvatar(null);
+    if (target === "profile" && family) {
+      setProfilePhone(family.phone); setNickname(family.displayName);
+      setAvatarImage(family.avatarUrl || ""); setAvatarChanged(false); setAvatarBytes(0);
+    }
     setPage(target);
     window.scrollTo(0, 0);
   }
@@ -348,13 +369,28 @@ function App() {
       book.available ? "图书已下架" : "图书已重新上架",
     );
   }
+  async function editAvatar() {
+    if (!avatarImage || avatarLoading) return;
+    const requestId = ++avatarRequest.current;
+    setAvatarLoading(true);
+    try {
+      const response = await fetch(avatarImage);
+      if (!response.ok) throw new Error("头像无法读取，请重新上传照片");
+      const blob = await response.blob();
+      if (requestId === avatarRequest.current) setPendingAvatar(new File([blob], "avatar", { type: blob.type }));
+    } catch (error) { if (requestId === avatarRequest.current) flash((error as Error).message); }
+    finally { if (requestId === avatarRequest.current) setAvatarLoading(false); }
+  }
   async function saveProfile() {
     if (!family) return;
-    await run(
-      () =>
-        api("/me", "PATCH", { displayName: nickname || family.displayName, ...(profilePhone.trim() ? { phone: profilePhone.trim() } : {}) }),
-      "家庭资料已保存",
-    );
+    await run(async () => {
+      const saved = await api<Family>("/me", "PATCH", {
+        displayName: nickname || family.displayName,
+        ...(profilePhone.trim() ? { phone: profilePhone.trim() } : {}),
+        ...(avatarChanged ? { avatarImage: avatarImage || null } : {}),
+      });
+      setAvatarImage(saved.avatarUrl || ""); setAvatarChanged(false); setAvatarBytes(0);
+    }, "家庭资料已保存");
   }
   async function addChild() {
     await run(async () => {
@@ -449,16 +485,14 @@ function App() {
               else { switchAuthMode("login"); setLoginOpen(true); }
             }}
           >
-            <span className="avatar">
-              {family ? family.displayName[0] : "访"}
-            </span>
+            <FamilyAvatar className="avatar" name={family?.displayName || "访"} src={family?.avatarUrl} decorative />
             <span>{family ? family.displayName : "家长登录"}</span>
             <span aria-hidden="true">›</span>
           </button>
         </div>
       </header>
       <main className={`main-content page-${page} ${cart.carts.length && ["discover","shops","detail"].includes(page) ? "with-borrow-cart" : ""}`}>
-        {page === "discover" && <Browse key={browseKey} books={books} options={options} cart={cart} onShopChange={setCurrentShop} />}
+        {page === "discover" && <Browse key={browseKey} books={books} options={options} cart={cart} onShopChange={setCurrentShop} onBrowseShops={() => go("shops")} />}
         {page === "shops" && <Shops books={books} enterShop={continueShop} />}
         {page === "detail" && selectedBook && (
           <>
@@ -605,7 +639,7 @@ function App() {
               <div className="my-library-title"><h1>我的书屋</h1><button className="secondary-button publish-entry" onClick={()=>go("publish")}><LibraryIcon name="plus"/> 发布图书</button></div>
             </div>
             <section className="family-card">
-              <div className="family-avatar">{family?.displayName[0]}</div>
+              <FamilyAvatar className="family-avatar" name={family?.displayName || "书"} src={family?.avatarUrl} decorative />
               <div>
                 <h2>{family?.displayName}</h2>
                 <p>让好故事继续流动</p>
@@ -661,6 +695,22 @@ function App() {
             <div className="publish-form profile-panel">
               <p>登录账号：{family.username || "待设置"}</p>
               <p>已验证邮箱：{family.email || "待设置"}</p>
+              <div className="avatar-upload">
+                <FamilyAvatar className="profile-avatar" name={nickname || family.displayName} src={avatarImage} />
+                <div className="avatar-upload-content">
+                  <strong>书屋头像</strong>
+                  <p>正方形裁剪，方形圆角展示。支持 JPG、PNG、WebP，原图不超过 20 MB，保存后不超过 600 KB。</p>
+                  {avatarBytes > 0 && <p>当前头像 {Math.round(avatarBytes / 1000)} KB，保存资料后生效。</p>}
+                  <div className="avatar-upload-actions">
+                    <input ref={avatarInput} type="file" accept="image/jpeg,image/png,image/webp" className="visually-hidden" aria-label="上传书屋头像" disabled={busy || avatarLoading} onChange={event => { const file = event.target.files?.[0]; if (file) setPendingAvatar(file); event.target.value = ""; }} />
+                    <button type="button" className="secondary-button" disabled={busy || avatarLoading} onClick={() => avatarInput.current?.click()}>{avatarImage ? "更换头像" : "上传头像"}</button>
+                    {avatarImage && <>
+                      <button type="button" className="secondary-button" disabled={busy || avatarLoading} onClick={() => void editAvatar()}>{avatarLoading ? "读取中…" : "重新裁剪"}</button>
+                      <button type="button" className="text-button" disabled={busy || avatarLoading} onClick={() => { setAvatarImage(""); setAvatarChanged(true); setAvatarBytes(0); }}>移除头像</button>
+                    </>}
+                  </div>
+                </div>
+              </div>
               <div className="field-grid">
                 <label>
                   书屋昵称
@@ -681,7 +731,7 @@ function App() {
               <div className="action-row">
                 <button
                   className="primary-button"
-                  disabled={busy}
+                  disabled={busy || avatarLoading}
                   onClick={saveProfile}
                 >
                   保存资料
@@ -976,6 +1026,7 @@ function App() {
           </div>
         </div>
       )}
+      {pendingAvatar && <CoverCropDialog key={pendingAvatar.name + pendingAvatar.lastModified} kind="avatar" file={pendingAvatar} onClose={() => setPendingAvatar(null)} onUse={(image, bytes) => { setAvatarImage(image); setAvatarBytes(bytes); setAvatarChanged(true); setPendingAvatar(null); }} />}
       {pendingCover && <CoverCropDialog file={pendingCover} onClose={() => setPendingCover(null)} onUse={(image, bytes) => { setCoverImage(image); setCoverBytes(bytes); setCoverChanged(true); setNonChildren(false); setPendingCover(null); void recognize(image); }} />}
     </div>
   );

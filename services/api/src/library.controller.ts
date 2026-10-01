@@ -66,6 +66,12 @@ export class LibraryController {
   @Get('shops/:id')
   shop(@Param('id') id: string) { return this.library.shop(id); }
 
+  @Get('shops/:id/avatar')
+  async avatar(@Param('id') id: string, @Res() res: Response) {
+    const avatar = await this.library.avatar(id);
+    res.set('Content-Type', avatar.mimeType).set('Cache-Control', 'private, max-age=300').send(avatar.data);
+  }
+
   @Get('shops/:id/books')
   async shopBooks(@Req() req: Request, @Param('id') id: string, @Query() query: Record<string, string>) {
     return this.library.shopBooks(id, query, (await this.library.getFamily(cookie(req)))?.id);

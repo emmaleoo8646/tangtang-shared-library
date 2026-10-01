@@ -1,30 +1,9 @@
-import { BadRequestException, ServiceUnavailableException } from '@nestjs/common';
-import sharp from 'sharp';
+import { ServiceUnavailableException } from '@nestjs/common';
+import { decodeImage, type ProcessedImage as CoverImage } from './image.js';
 
-export type CoverImage = { mimeType: 'image/jpeg' | 'image/png' | 'image/webp'; data: Buffer };
+export type { ProcessedImage as CoverImage } from './image.js';
 
-export async function decodeCover(value: unknown): Promise<CoverImage> {
-  if (typeof value !== 'string') throw new BadRequestException('请上传图书封面照片');
-  const match = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
-  if (!match || match[2].length > 800_000) throw new BadRequestException('封面只支持 JPG、PNG、WebP，处理后不能超过 600 KB');
-  const data = Buffer.from(match[2], 'base64');
-  if (!data.length || data.length > 600_000) throw new BadRequestException('处理后的封面不能超过 600 KB');
-  const mimeType = match[1] as CoverImage['mimeType'];
-  const valid = mimeType === 'image/jpeg' ? data.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))
-    : mimeType === 'image/png' ? data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-      : data.subarray(0, 4).toString() === 'RIFF' && data.subarray(8, 12).toString() === 'WEBP';
-  if (!valid) throw new BadRequestException('封面图片格式不正确');
-  try {
-    const metadata = await sharp(data, { limitInputPixels: 20_000_000 }).metadata();
-    if (metadata.format !== mimeType.slice(6) || !metadata.width || !metadata.height || metadata.width > 960 || metadata.height > 960) {
-      throw new BadRequestException('请裁剪封面，使图片最长边不超过 960 像素');
-    }
-  } catch (error) {
-    if (error instanceof BadRequestException) throw error;
-    throw new BadRequestException('封面图片无法读取，请使用 JPG、PNG 或 WebP');
-  }
-  return { mimeType, data };
-}
+export const decodeCover = (value: unknown) => decodeImage(value);
 
 function modelConfig() {
   if (process.env.AI_PROVIDER?.trim() && process.env.AI_PROVIDER?.trim().toLowerCase() !== 'minimax') throw new ServiceUnavailableException('当前识书功能仅支持 MiniMax，请设置 AI_PROVIDER=minimax');
