@@ -29,3 +29,17 @@ android/local.properties
 .local-data/
 artifacts/*.apk
 *.log
+
+# Codex local working assets (use the shared external workspaces instead)
+.ai-work/
+.codex-work/
+scratch/
+tmp/
+demos/
+experiments/
+screenshots/
+output/
+*.tmp
+*.bak
+services/api/reset-demo-password.mjs
+Dev-Scratch/
