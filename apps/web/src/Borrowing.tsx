@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   allBooks,
@@ -17,6 +17,8 @@ import { BookVisual } from "./components/BookVisual";
 import { FamilyAvatar } from "./components/FamilyAvatar";
 import { BookDetails } from "./components/BookDetails";
 import type { ReactNode } from "react";
+import { NativeSelect } from "./components/Choices";
+import { choicesStatusMessage, restoreCatalogFilter, type ChoicesStatus } from "./choicePresentation";
 
 type Cart = {
   shopId: string;
@@ -404,95 +406,6 @@ export function Sheet({
     </div>
   );
 }
-export function ChoiceSelect({
-  label,
-  value,
-  options,
-  onChange,
-  disabled = false,
-}: {
-  label: string;
-  value: string;
-  options: { value: string; label: string }[];
-  onChange: (value: string) => void;
-  disabled?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const id = useId();
-  return (
-    <>
-      <button
-        type="button"
-        className="choice-select"
-        role="combobox"
-        aria-label={label}
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        aria-controls={open ? id : undefined}
-        disabled={disabled}
-        onClick={() => setOpen(true)}
-        onKeyDown={(e) => {
-          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-            e.preventDefault();
-            setOpen(true);
-          }
-        }}
-      >
-        <span>{options.find((o) => o.value === value)?.label || "请选择"}</span>
-        <LibraryIcon name="chevron" />
-      </button>
-      {open && (
-        <Sheet title={label} close={() => setOpen(false)}>
-          <div
-            id={id}
-            role="listbox"
-            aria-label={label}
-            className="choice-options"
-            onKeyDown={(e) => {
-              if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key))
-                return;
-              e.preventDefault();
-              const nodes = [
-                ...e.currentTarget.querySelectorAll<HTMLButtonElement>(
-                  "button",
-                ),
-              ];
-              const current = nodes.indexOf(
-                document.activeElement as HTMLButtonElement,
-              );
-              const next =
-                e.key === "Home"
-                  ? 0
-                  : e.key === "End"
-                    ? nodes.length - 1
-                    : (current +
-                        (e.key === "ArrowDown" ? 1 : -1) +
-                        nodes.length) %
-                      nodes.length;
-              nodes[next]?.focus();
-            }}
-          >
-            {options.map((o) => (
-              <button
-                type="button"
-                role="option"
-                aria-selected={o.value === value}
-                key={o.value}
-                onClick={() => {
-                  onChange(o.value);
-                  setOpen(false);
-                }}
-              >
-                <span>{o.label}</span>
-                {o.value === value && <LibraryIcon name="check" />}
-              </button>
-            ))}
-          </div>
-        </Sheet>
-      )}
-    </>
-  );
-}
 export function Shops({
   books,
   enterShop,
@@ -573,12 +486,14 @@ export function Shops({
 export function Browse({
   books,
   options,
+  optionsStatus,
   cart,
   onShopChange,
   onBrowseShops,
 }: {
   books: Book[];
   options: OptionLists;
+  optionsStatus: ChoicesStatus;
   cart: BorrowCart;
   onShopChange: (id: string) => void;
   onBrowseShops: () => void;
@@ -620,6 +535,14 @@ export function Browse({
     onShopChange(shopId);
   }, [shopId, onShopChange]);
   const scroll = useRef<number>(saved.scroll || 0);
+  useEffect(() => {
+    if (optionsStatus !== "ready") return;
+    const nextAge = restoreCatalogFilter(age, options.ages);
+    const nextCategory = restoreCatalogFilter(category, options.categories);
+    if (nextAge !== age || nextCategory !== category) scroll.current = 0;
+    setAge(nextAge);
+    setCategory(nextCategory);
+  }, [age, category, options, optionsStatus]);
   useEffect(() => {
     const restoreY = scroll.current;
     const restore = requestAnimationFrame(() => window.scrollTo(0, restoreY));
@@ -794,6 +717,7 @@ export function Browse({
             {["全部", ...options.categories.map((o) => o.label)].map((c) => (
               <button
                 key={c}
+                disabled={optionsStatus !== "ready"}
                 aria-pressed={category === c}
                 className={category === c ? "selected" : ""}
                 onClick={() => {
@@ -806,7 +730,10 @@ export function Browse({
             ))}
           </div>
           <div className="browse-age">
-            <ChoiceSelect
+            <NativeSelect
+              hideLabel
+              disabled={optionsStatus !== "ready"}
+              message={choicesStatusMessage(optionsStatus)}
               label="适读年龄"
               value={age}
               options={[

@@ -132,6 +132,23 @@ button { transition: color 160ms, background-color 160ms, border-color 160ms; }
 input::placeholder, textarea::placeholder { color: #8a8a8a; }
 .field-grid textarea, .cart-message textarea { min-height: 112px; resize: vertical; }
 .full-field { grid-column: 1 / -1; }
+.choice-field { min-width:0; display:flex; flex-direction:column; gap:8px; font-size:14px; font-weight:500; }
+.choice-group { margin:0; padding:0; border:0; }
+.choice-group legend { padding:0; margin-bottom:8px; }
+.native-choice-control { position:relative; min-width:0; }
+.native-choice-control .native-choice { appearance:none; width:100%; min-width:0; min-height:48px; padding:12px 36px 12px 12px; border:1px solid #d8d8d8; border-radius:10px; background:#fff; color:var(--ink); font-size:16px; }
+.native-choice-control > .library-icon { position:absolute; top:50%; right:12px; width:16px; height:16px; transform:translateY(-50%) rotate(90deg); pointer-events:none; color:var(--muted); }
+.choice-chips { display:flex; flex-wrap:wrap; gap:8px; min-width:0; }
+.choice-chips .choice-chip { position:relative; display:block; min-width:0; max-width:100%; cursor:pointer; }
+.choice-chip input { position:absolute; opacity:0; width:1px; height:1px; min-height:0; padding:0; border:0; }
+.choice-chip > span { display:flex; align-items:center; justify-content:center; gap:8px; min-height:44px; padding:10px 12px; border:1px solid #d8d8d8; border-radius:10px; background:#fff; font-size:15px; overflow-wrap:anywhere; }
+.choice-chip .library-icon { flex:none; width:16px; height:16px; }
+.choice-chip input:checked + span { color:var(--accent); border-color:var(--accent); background:var(--accent-soft); }
+.choice-chip input:focus-visible + span { outline:3px solid var(--accent); outline-offset:3px; }
+.choice-chip input:disabled + span { opacity:.6; cursor:not-allowed; }
+.choice-message { margin:0; font-size:12px; line-height:1.6; font-weight:400; color:var(--muted); overflow-wrap:anywhere; }
+.choice-field[aria-invalid="true"] .choice-message, .choice-message--invalid { color:#b44735; }
+.native-choice:disabled { opacity:.6; cursor:not-allowed; }
 .summary-label { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .summary-label button { min-height: 44px; padding: 0; border: 0; background: none; color: var(--accent); font-size: 13px; }
 .summary-sources { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; color: var(--muted); font-size: 12px; }

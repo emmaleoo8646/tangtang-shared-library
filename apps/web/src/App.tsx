@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api, allBooks, ApiError, type Book, type Family, type Loan, type OptionLists } from "./api";
-import { SelectBook, Browse, Shops, ChoiceSelect, CartPanel, GroupCard, groupLoans, useBorrowCart } from "./Borrowing";
+import { SelectBook, Browse, Shops, CartPanel, GroupCard, groupLoans, useBorrowCart } from "./Borrowing";
+import { InlineChoice, NativeSelect } from "./components/Choices";
+import { catalogChoices, catalogChoiceIssue, choicesStatusMessage, defaultChoice, type ChoicesStatus } from "./choicePresentation";
 import { LibraryIcon, type LibraryIconName } from "./components/LibraryIcon";
 import { loanPresentation } from "./loanPresentation";
 import { CoverCropDialog } from "./CoverCropDialog";
@@ -21,9 +23,6 @@ const statusText: Record<string, string> = {
   REJECTED: "已拒绝",
   EXPIRED: "已超时",
 };
-function currentOptionsFallback(current: string, rows: OptionLists["categories"], fallback: string) {
-  return rows.some(option => option.id === current && option.active) ? current : (rows.find(option => option.active)?.id ?? fallback);
-}
 const active = new Set([
   "REQUESTED",
   "APPROVED",
@@ -57,11 +56,14 @@ function App() {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [family, setFamily] = useState<Family | null>(null);
   const [options, setOptions] = useState<OptionLists>({ categories: [], ages: [], conditions: [] });
+  const [optionsStatus, setOptionsStatus] = useState<ChoicesStatus>("loading");
+  const choicesInitialized = useRef(false);
   const [selectedId, setSelectedId] = useState("");
   const [authReadyLoaded, setAuthReadyLoaded] = useState(false);
   const [currentShop, setCurrentShop] = useState(new URLSearchParams(location.search).get("shop") || "");
   const [browseKey, setBrowseKey] = useState(0);
   const [ownedSeries, setOwnedSeries] = useState<{id:string;name:string}[]>([]);
+  const [seriesStatus, setSeriesStatus] = useState<ChoicesStatus>("loading");
   const [publishSeries, setPublishSeries] = useState("");
   const [seriesOrder, setSeriesOrder] = useState("");
   const [taskTab, setTaskTab] = useState<"all" | "progress" | "done">("all");
@@ -102,6 +104,7 @@ function App() {
   const [coverBytes, setCoverBytes] = useState(0);
   const [pendingCover, setPendingCover] = useState<File | null>(null);
   const [editingBookId, setEditingBookId] = useState<string | null>(null);
+  const [originalChoices, setOriginalChoices] = useState<{ category: string; age: string; condition: string } | null>(null);
   const [assistBusy, setAssistBusy] = useState<"recognize" | "summarize" | null>(null);
   const [recognizeNotice, setRecognizeNotice] = useState("");
   const [summarizeNotice, setSummarizeNotice] = useState("");
@@ -128,30 +131,57 @@ function App() {
   const authReady = authMode === "login"
     ? Boolean(account.trim() && password)
     : emailValid && /^\d{6}$/.test(code) && password.length >= 10 && password === confirmPassword && (authMode === "reset" || /^[a-zA-Z0-9_]{4,24}$/.test(account));
+  const categoryIssue = catalogChoiceIssue(options.categories, publishCategory, optionsStatus, originalChoices?.category);
+  const ageIssue = catalogChoiceIssue(options.ages, publishAge, optionsStatus, originalChoices?.age);
+  const conditionIssue = catalogChoiceIssue(options.conditions, condition, optionsStatus, originalChoices?.condition);
+  const seriesIssue = choicesStatusMessage(seriesStatus) || (publishSeries && !ownedSeries.some(series => series.id === publishSeries) ? "所选系列已不存在，请重新选择。" : "");
+  const publishIssue = categoryIssue || ageIssue || conditionIssue || seriesIssue;
+  const childAgeIssue = catalogChoiceIssue(options.ages, childAge, optionsStatus);
   function flash(message: string) {
     setToast(message);
     window.setTimeout(() => setToast(""), 4000);
   }
   async function refresh() {
-    const [list, currentOptions] = await Promise.all([allBooks(), api<OptionLists>("/options")]);
-    setBooks(list);
-    setOptions(currentOptions);
-    try {
-      const me = await api<Family>("/me");
-      setFamily(me);
-      setLoans(await api<Loan[]>("/loans"));
-      setOwnedSeries(await api<{id:string;name:string}[]>("/series"));
-    } catch (error) {
-      if (!(error instanceof ApiError) || ![401,403].includes(error.status)) throw error;
-      setFamily(null);
-      setLoans([]); setOwnedSeries([]);
-    }
-    setAuthReadyLoaded(true);
+    await Promise.all([
+      allBooks().then(setBooks),
+      api<OptionLists>("/options").then(rows => {
+        setOptions(rows);
+        setOptionsStatus("ready");
+      }).catch(error => { setOptionsStatus("error"); throw error; }),
+      (async () => {
+        let me: Family;
+        try { me = await api<Family>("/me"); }
+        catch (error) {
+          if (!(error instanceof ApiError) || ![401,403].includes(error.status)) throw error;
+          setFamily(null); setLoans([]); setOwnedSeries([]); setSeriesStatus("loading");
+          setAuthReadyLoaded(true);
+          return;
+        }
+        setFamily(me);
+        await Promise.all([
+          api<Loan[]>("/loans").then(setLoans),
+          api<{id:string;name:string}[]>("/series").then(rows => {
+            setOwnedSeries(rows); setSeriesStatus("ready");
+          }).catch(error => { setSeriesStatus("error"); throw error; }),
+        ]);
+        setAuthReadyLoaded(true);
+      })(),
+    ]);
   }
   const cart = useBorrowCart(family, authReadyLoaded, books, refresh, () => { switchAuthMode("login"); setLoginOpen(true); }, flash);
   useEffect(() => {
     void refresh().catch((error) => flash((error as Error).message));
   }, []);
+  useEffect(() => {
+    if (optionsStatus !== "ready" || choicesInitialized.current) return;
+    choicesInitialized.current = true;
+    setChildAge(current => defaultChoice(current, options.ages));
+    if (!editingBookId) {
+      setPublishCategory(current => defaultChoice(current || "category-picture", options.categories));
+      setPublishAge(current => defaultChoice(current || "age-3-6", options.ages));
+      setCondition(current => defaultChoice(current || "condition-like-new", options.conditions));
+    }
+  }, [options, optionsStatus, editingBookId]);
   useEffect(() => {
     if (!family) return;
     const timer = window.setInterval(() => {
@@ -178,11 +208,12 @@ function App() {
       assistRequest.current++;
       setAssistBusy(null);
       setEditingBookId(null);
+      setOriginalChoices(null);
       setPublishSeries(""); setSeriesOrder("");
       setTitle(""); setAuthor(""); setSummary(""); setNonChildren(false); setCoverImage(""); setCoverChanged(false); setCoverBytes(0);
-      setPublishCategory(current => currentOptionsFallback(current, options.categories, "category-picture"));
-      setPublishAge(current => currentOptionsFallback(current, options.ages, "age-3-6"));
-      setCondition(current => currentOptionsFallback(current, options.conditions, "condition-like-new"));
+      setPublishCategory(current => defaultChoice(current, options.categories));
+      setPublishAge(current => defaultChoice(current, options.ages));
+      setCondition(current => defaultChoice(current, options.conditions));
       setPrivacyConfirmed(false); setRecognizeNotice(""); setSummarizeNotice(""); setSummarySources([]);
     }
     avatarRequest.current++;
@@ -271,6 +302,7 @@ function App() {
     }, "已退出登录");
   }
   async function publish() {
+    if (publishIssue) { flash(publishIssue); return; }
     if (!privacyConfirmed) {
       flash("请先确认图书信息与隐私");
       return;
@@ -279,7 +311,7 @@ function App() {
       await api(editingBookId ? `/books/${editingBookId}` : "/books", editingBookId ? "PATCH" : "POST", {
         title,
         seriesId: publishSeries || null,
-        seriesOrder: seriesOrder || null,
+        seriesOrder: publishSeries ? seriesOrder || null : null,
         author,
         categoryOptionId: publishCategory,
         ageOptionId: publishAge,
@@ -297,6 +329,7 @@ function App() {
       setCoverChanged(false);
       setCoverBytes(0);
       setEditingBookId(null);
+      setOriginalChoices(null);
       setRecognizeNotice(""); setSummarizeNotice("");
       setSummarySources([]);
       setPrivacyConfirmed(false);
@@ -320,6 +353,7 @@ function App() {
     setPublishCategory(book.categoryOptionId || "category-other");
     setPublishAge(book.ageOptionId || "age-3-6");
     setCondition(book.conditionOptionId);
+    setOriginalChoices({ category: book.categoryOptionId || "", age: book.ageOptionId || "", condition: book.conditionOptionId });
     setCoverImage(book.coverUrl || ""); setCoverChanged(false); setCoverBytes(0);
     setRecognizeNotice(""); setSummarizeNotice(""); setSummarySources([]); setPrivacyConfirmed(true);
     setPage("publish"); window.scrollTo(0, 0);
@@ -335,7 +369,7 @@ function App() {
       if (requestId !== assistRequest.current) return;
       if (result.title) setTitle(result.title);
       if (result.author) setAuthor(result.author);
-      const found = options.categories.find(option => option.label === result.category);
+      const found = options.categories.find(option => option.active && option.label === result.category);
       if (found) setPublishCategory(found.id);
       if (result.summary) setSummary(result.summary);
       if (typeof result.nonChildren === "boolean") setNonChildren(result.nonChildren);
@@ -393,6 +427,7 @@ function App() {
     }, "家庭资料已保存");
   }
   async function addChild() {
+    if (childAgeIssue) { flash(childAgeIssue); return; }
     await run(async () => {
       await api("/me/children", "POST", {
         nickname: childNickname,
@@ -492,7 +527,7 @@ function App() {
         </div>
       </header>
       <main className={`main-content page-${page} ${cart.carts.length && ["discover","shops","detail"].includes(page) ? "with-borrow-cart" : ""}`}>
-        {page === "discover" && <Browse key={browseKey} books={books} options={options} cart={cart} onShopChange={setCurrentShop} onBrowseShops={() => go("shops")} />}
+        {page === "discover" && <Browse key={browseKey} books={books} options={options} optionsStatus={optionsStatus} cart={cart} onShopChange={setCurrentShop} onBrowseShops={() => go("shops")} />}
         {page === "shops" && <Shops books={books} enterShop={continueShop} />}
         {page === "detail" && selectedBook && (
           <>
@@ -560,19 +595,15 @@ function App() {
                       placeholder="不确定可留空"
                     />
                   </label>
-                  <label>
-                    分类
-                    <ChoiceSelect label="图书分类" value={publishCategory} onChange={setPublishCategory} options={options.categories.filter(o=>o.active || o.id === publishCategory).map(o=>({value:o.id,label:o.label+(o.active ? "" : "（已停用）")}))}/>
-                  </label>
-                  <label>
-                    适读年龄
-                    <ChoiceSelect label="适读年龄" value={publishAge} onChange={setPublishAge} options={options.ages.filter(o=>o.active || o.id === publishAge).map(o=>({value:o.id,label:o.label+(o.active ? "" : "（已停用）")}))}/>
-                  </label>
-                  <label>
-                    新旧程度
-                    <ChoiceSelect label="新旧程度" value={condition} onChange={setCondition} options={options.conditions.filter(o=>o.active || o.id === condition).map(o=>({value:o.id,label:o.label+(o.active ? "" : "（已停用）")}))}/>
-                  </label>
-                  <label>所属系列（选填）<ChoiceSelect label="所属系列" value={publishSeries} onChange={setPublishSeries} options={[{value:"",label:"单本图书"},...ownedSeries.map(item=>({value:item.id,label:item.name}))]}/></label>
+                  <NativeSelect label="图书分类" value={publishCategory} onChange={setPublishCategory} disabled={optionsStatus !== "ready" || busy}
+                    options={catalogChoices(options.categories, publishCategory, originalChoices?.category)} message={categoryIssue} />
+                  <InlineChoice label="适读年龄" value={publishAge} onChange={setPublishAge} disabled={optionsStatus !== "ready" || busy}
+                    options={catalogChoices(options.ages, publishAge, originalChoices?.age)} message={ageIssue} />
+                  <InlineChoice label="新旧程度" value={condition} onChange={setCondition} disabled={optionsStatus !== "ready" || busy}
+                    options={catalogChoices(options.conditions, condition, originalChoices?.condition)} message={conditionIssue} />
+                  <NativeSelect label="所属系列（选填）" value={publishSeries} onChange={value => { setPublishSeries(value); if (!value) setSeriesOrder(""); }}
+                    disabled={seriesStatus !== "ready" || busy} message={seriesIssue}
+                    options={[{value:"",label:"单本图书"},...ownedSeries.map(item=>({value:item.id,label:item.name}))]} />
                   <label>系列册序（选填）<input type="number" min="1" max="10000" disabled={!publishSeries} value={seriesOrder} onChange={e=>setSeriesOrder(e.target.value)} placeholder="例如 1" /></label>
                   <label className="full-field">
                     <span className="summary-label"><span>简单介绍</span><button type="button" disabled={!title.trim() || !!assistBusy} onClick={() => void generateSummary()}>{assistBusy === "summarize" ? "检索中…" : "✦ AI 检索并生成"}</button></span>
@@ -604,7 +635,7 @@ function App() {
                 </label>
                 <button
                   className="primary-button"
-                  disabled={busy || !!assistBusy || !title.trim()}
+                  disabled={busy || !!assistBusy || !title.trim() || !!publishIssue}
                   onClick={publish}
                 >
                   {editingBookId ? "保存修改" : "确认发布"}
@@ -768,14 +799,12 @@ function App() {
                     onChange={(event) => setChildNickname(event.target.value)}
                   />
                 </label>
-                <label>
-                  年龄段
-                  <ChoiceSelect label="孩子年龄段" value={childAge} onChange={setChildAge} options={options.ages.filter(o=>o.active).map(o=>({value:o.id,label:o.label}))}/>
-                </label>
+                <InlineChoice label="孩子年龄段" value={childAge} onChange={setChildAge} disabled={optionsStatus !== "ready" || busy}
+                  options={catalogChoices(options.ages, childAge)} message={childAgeIssue} />
               </div>
               <button
                 className="secondary-button"
-                disabled={busy || !childNickname.trim()}
+                disabled={busy || !childNickname.trim() || !!childAgeIssue}
                 onClick={addChild}
               >
                 添加孩子档案
