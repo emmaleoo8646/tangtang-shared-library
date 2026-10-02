@@ -1,15 +1,16 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { api, allBooks, ApiError, type Book, type Family, type Loan, type OptionLists } from "./api";
 import { SelectBook, Browse, Shops, CartPanel, GroupCard, useBorrowCart } from "./Borrowing";
-import { InlineChoice, NativeSelect } from "./components/Choices";
-import { catalogChoices, catalogChoiceIssue, choicesStatusMessage, defaultChoice, type ChoicesStatus } from "./choicePresentation";
+import { InlineChoice } from "./components/Choices";
+import { catalogChoices, catalogChoiceIssue, defaultChoice, type ChoicesStatus } from "./choicePresentation";
 import { LibraryIcon, type LibraryIconName } from "./components/LibraryIcon";
 import { groupLoans, loanPresentation, needsAttention, prioritizeLoanGroups } from "./loanPresentation";
 import { CoverCropDialog } from "./CoverCropDialog";
-import { AiBusyNote } from "./components/AiBusyNote";
 import { OwnBooks } from "./OwnBooks";
 import { FamilyAvatar } from "./components/FamilyAvatar";
 import { BookDetails } from "./components/BookDetails";
+import { PublishBook } from "./PublishBook";
+import { clearPublishDraft } from "./publishDraft";
 
 type Page = "discover" | "shops" | "detail" | "publish" | "tasks" | "library" | "profile";
 const statusText: Record<string, string> = {
@@ -53,8 +54,6 @@ function App() {
   const [browseKey, setBrowseKey] = useState(0);
   const [ownedSeries, setOwnedSeries] = useState<{id:string;name:string}[]>([]);
   const [seriesStatus, setSeriesStatus] = useState<ChoicesStatus>("loading");
-  const [publishSeries, setPublishSeries] = useState("");
-  const [seriesOrder, setSeriesOrder] = useState("");
   const [taskTab, setTaskTab] = useState<"all" | "progress" | "done">("progress");
   const [libraryTab, setLibraryTab] = useState<"my" | "borrowed" | "lent">(
     "my",
@@ -81,27 +80,7 @@ function App() {
   const [developmentCode, setDevelopmentCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
-  const [title, setTitle] = useState("");
-  const [author, setAuthor] = useState("");
-  const [publishCategory, setPublishCategory] = useState("category-picture");
-  const [publishAge, setPublishAge] = useState("age-3-6");
-  const [condition, setCondition] = useState("condition-like-new");
-  const [summary, setSummary] = useState("");
-  const [nonChildren, setNonChildren] = useState(false);
-  const [coverImage, setCoverImage] = useState("");
-  const [coverChanged, setCoverChanged] = useState(false);
-  const [coverBytes, setCoverBytes] = useState(0);
-  const [pendingCover, setPendingCover] = useState<File | null>(null);
-  const [editingBookId, setEditingBookId] = useState<string | null>(null);
-  const [originalChoices, setOriginalChoices] = useState<{ category: string; age: string; condition: string } | null>(null);
-  const [assistBusy, setAssistBusy] = useState<"recognize" | "summarize" | null>(null);
-  const [recognizeNotice, setRecognizeNotice] = useState("");
-  const [summarizeNotice, setSummarizeNotice] = useState("");
-  const [summarySources, setSummarySources] = useState<{ title: string; url: string }[]>([]);
-  const coverInput = useRef<HTMLInputElement>(null);
-  const assistRequest = useRef(0);
-
-  const [privacyConfirmed, setPrivacyConfirmed] = useState(false);
+  const [editingBook, setEditingBook] = useState<Book | null>(null);
   const [childNickname, setChildNickname] = useState("");
   const [childAge, setChildAge] = useState("age-3-6");
   const [closeAccountOpen, setCloseAccountOpen] = useState(false);
@@ -109,6 +88,7 @@ function App() {
   const [accountDangerOpen, setAccountDangerOpen] = useState(false);
 
   const selectedBook = books.find((book) => book.id === selectedId);
+  const publishEditingBook = editingBook?.shopId === family?.id ? editingBook : null;
   const selectedLoan = loans.find(
     (loan) => loan.bookId === selectedId && active.has(loan.stage),
   );
@@ -120,11 +100,6 @@ function App() {
   const authReady = authMode === "login"
     ? Boolean(account.trim() && password)
     : emailValid && /^\d{6}$/.test(code) && password.length >= 10 && password === confirmPassword && (authMode === "reset" || /^[a-zA-Z0-9_]{4,24}$/.test(account));
-  const categoryIssue = catalogChoiceIssue(options.categories, publishCategory, optionsStatus, originalChoices?.category);
-  const ageIssue = catalogChoiceIssue(options.ages, publishAge, optionsStatus, originalChoices?.age);
-  const conditionIssue = catalogChoiceIssue(options.conditions, condition, optionsStatus, originalChoices?.condition);
-  const seriesIssue = choicesStatusMessage(seriesStatus) || (publishSeries && !ownedSeries.some(series => series.id === publishSeries) ? "所选系列已不存在，请重新选择。" : "");
-  const publishIssue = categoryIssue || ageIssue || conditionIssue || seriesIssue;
   const childAgeIssue = catalogChoiceIssue(options.ages, childAge, optionsStatus);
   function flash(message: string) {
     setToast(message);
@@ -165,12 +140,7 @@ function App() {
     if (optionsStatus !== "ready" || choicesInitialized.current) return;
     choicesInitialized.current = true;
     setChildAge(current => defaultChoice(current, options.ages));
-    if (!editingBookId) {
-      setPublishCategory(current => defaultChoice(current || "category-picture", options.categories));
-      setPublishAge(current => defaultChoice(current || "age-3-6", options.ages));
-      setCondition(current => defaultChoice(current || "condition-like-new", options.conditions));
-    }
-  }, [options, optionsStatus, editingBookId]);
+  }, [options, optionsStatus]);
   useEffect(() => {
     if (!family) return;
     const timer = window.setInterval(() => {
@@ -194,18 +164,7 @@ function App() {
       return;
     }
     if (target === "discover") { history.pushState(null,"","/"); setCurrentShop(""); setBrowseKey(key=>key+1); }
-    if (target === "publish") {
-      assistRequest.current++;
-      setAssistBusy(null);
-      setEditingBookId(null);
-      setOriginalChoices(null);
-      setPublishSeries(""); setSeriesOrder("");
-      setTitle(""); setAuthor(""); setSummary(""); setNonChildren(false); setCoverImage(""); setCoverChanged(false); setCoverBytes(0);
-      setPublishCategory(current => defaultChoice(current, options.categories));
-      setPublishAge(current => defaultChoice(current, options.ages));
-      setCondition(current => defaultChoice(current, options.conditions));
-      setPrivacyConfirmed(false); setRecognizeNotice(""); setSummarizeNotice(""); setSummarySources([]);
-    }
+    if (target === "publish") setEditingBook(null);
     avatarRequest.current++;
     setAvatarLoading(false);
     setPendingAvatar(null);
@@ -291,99 +250,12 @@ function App() {
       setPage("discover");
     }, "已退出登录");
   }
-  async function publish() {
-    if (publishIssue) { flash(publishIssue); return; }
-    if (!privacyConfirmed) {
-      flash("请先确认图书信息与隐私");
-      return;
-    }
-    await run(async () => {
-      await api(editingBookId ? `/books/${editingBookId}` : "/books", editingBookId ? "PATCH" : "POST", {
-        title,
-        seriesId: publishSeries || null,
-        seriesOrder: publishSeries ? seriesOrder || null : null,
-        author,
-        categoryOptionId: publishCategory,
-        ageOptionId: publishAge,
-        conditionOptionId: condition,
-        summary,
-        nonChildren,
-        coverImage: coverChanged ? coverImage : undefined,
-        privacyConfirmed,
-      });
-      setTitle("");
-      setAuthor("");
-      setSummary("");
-      setNonChildren(false);
-      setCoverImage("");
-      setCoverChanged(false);
-      setCoverBytes(0);
-      setEditingBookId(null);
-      setOriginalChoices(null);
-      setRecognizeNotice(""); setSummarizeNotice("");
-      setSummarySources([]);
-      setPrivacyConfirmed(false);
-      setPage("library");
-      setLibraryTab("my");
-    }, editingBookId ? "图书信息已更新" : "图书已发布");
-  }
-
-  function chooseCover(file?: File) {
-    if (!file) return;
-    setPendingCover(file);
-  }
-
   function startEdit(book: Book) {
     if (!book.editable) { flash("借阅申请或借出期间不能编辑图书"); return; }
-    assistRequest.current++;
-    setAssistBusy(null);
-    setEditingBookId(book.id);
-    setPublishSeries(book.series?.id || ""); setSeriesOrder(book.seriesOrder?.toString() || "");
-    setTitle(book.title); setAuthor(book.author); setSummary(book.summary); setNonChildren(book.nonChildren);
-    setPublishCategory(book.categoryOptionId || "category-other");
-    setPublishAge(book.ageOptionId || "age-3-6");
-    setCondition(book.conditionOptionId);
-    setOriginalChoices({ category: book.categoryOptionId || "", age: book.ageOptionId || "", condition: book.conditionOptionId });
-    setCoverImage(book.coverUrl || ""); setCoverChanged(false); setCoverBytes(0);
-    setRecognizeNotice(""); setSummarizeNotice(""); setSummarySources([]); setPrivacyConfirmed(true);
+    setEditingBook(book);
     setPage("publish"); window.scrollTo(0, 0);
   }
 
-  async function recognize(image = coverImage) {
-    if (!image) return;
-    const requestId = ++assistRequest.current;
-    setAssistBusy("recognize");
-    setRecognizeNotice("正在识别封面并检索图书资料，简介会自动填写…");
-    try {
-      const result = await api<{ title: string; author: string; category: string; summary: string; nonChildren?: boolean; sources: { title: string; url: string }[]; notice?: string }>("/books/recognize", "POST", { coverImage: image });
-      if (requestId !== assistRequest.current) return;
-      if (result.title) setTitle(result.title);
-      if (result.author) setAuthor(result.author);
-      const found = options.categories.find(option => option.active && option.label === result.category);
-      if (found) setPublishCategory(found.id);
-      if (result.summary) setSummary(result.summary);
-      if (typeof result.nonChildren === "boolean") setNonChildren(result.nonChildren);
-      setSummarySources(result.sources);
-      setRecognizeNotice(result.notice || "已自动识别封面并检索资料，请核对图书信息与简介。");
-    } catch (error) { if (requestId === assistRequest.current) { setRecognizeNotice("自动识别暂未完成，可手动填写，或点击按钮重试。"); flash((error as Error).message); } }
-    finally { if (requestId === assistRequest.current) setAssistBusy(null); }
-  }
-
-  async function generateSummary() {
-    if (!title.trim() || assistBusy) return;
-    const requestId = ++assistRequest.current;
-    setAssistBusy("summarize");
-    setSummarizeNotice("正在检索图书资料并撰写简介…");
-    try {
-      const result = await api<{ summary: string; nonChildren: boolean; sources: { title: string; url: string }[] }>("/books/summarize", "POST", { title, author });
-      if (requestId !== assistRequest.current) return;
-      setSummary(result.summary);
-      setNonChildren(result.nonChildren);
-      setSummarySources(result.sources);
-      setSummarizeNotice("MiniMax 已检索图书资料，请核对简介内容。");
-    } catch (error) { if (requestId === assistRequest.current) { setSummarizeNotice("AI 检索简介暂未完成，可手动填写或调整书名/作者后重试。"); flash((error as Error).message); } }
-    finally { if (requestId === assistRequest.current) setAssistBusy(null); }
-  }
   async function setShelf(book: Book) {
     await run(
       () =>
@@ -449,6 +321,7 @@ function App() {
     setCloseAccountName("");
     await run(async () => {
       await api("/me", "DELETE");
+      if (!clearPublishDraft(family.id)) flash("账号已注销，但本机草稿未能清除。");
       setPage("discover");
     }, "账号已注销");
   }
@@ -537,117 +410,15 @@ function App() {
             </>} />
           </>
         )}
-        {page === "publish" && (
-          <>
-            <div className="page-title">
-              <p className="eyebrow">{editingBookId ? "整理我的藏书" : "把好故事分享出去"}</p>
-              <h1>{editingBookId ? "编辑图书" : "发布一本童书"}</h1>
-              <p>{editingBookId ? "修改书的信息与封面，保存后会更新展示。" : "拍一张封面，快速填写图书信息；发布前请家长认真核对。"}</p>
-            </div>
-            <div className="publish-layout">
-              <div className="publish-form">
-                <div className="form-section-head">
-                  <span className="step-number">1</span>
-                  <div>
-                    <h2>图书信息</h2>
-                    <p>所有信息都由家长确认后才展示。</p>
-                  </div>
-                </div>
-                <div className="cover-upload">
-                  <div className="cover-upload-preview">
-                    {coverImage ? <img src={coverImage} alt="待发布的图书封面" /> : <span aria-hidden="true">▧</span>}
-                  </div>
-                  <div className="cover-upload-content">
-                    <strong>添加封面照片</strong>
-                    <p>拍照或上传清晰封面，自动选择封面范围；确认后识别书名并填写简介。{coverChanged && coverBytes ? `当前封面 ${Math.round(coverBytes / 1000)} KB。` : ""}</p>
-                    <div className="cover-upload-actions">
-                      <input ref={coverInput} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" className="visually-hidden" aria-label="拍照或上传图书封面" onChange={(event) => { chooseCover(event.target.files?.[0]); event.target.value = ""; }} />
-                      <button type="button" className="secondary-button" onClick={() => coverInput.current?.click()}>{coverImage ? "更换照片" : "拍照 / 上传"}</button>
-                      <button type="button" className="ai-button" disabled={!coverChanged || !!assistBusy} onClick={() => void recognize()}>{assistBusy === "recognize" ? "识别中…" : "✦ AI 识别并填写"}</button>
-                    </div>
-                  </div>
-                </div>
-                <AiBusyNote
-                  text={recognizeNotice}
-                  busy={assistBusy === "recognize"}
-                  errorText="自动识别暂未完成，可手动填写，或点击按钮重试。"
-                />
-                <div className="field-grid">
-                  <label>
-                    <span className="field-label">书名 <b>*</b></span>
-                    <input
-                      value={title}
-                      maxLength={100}
-                      onChange={(event) => setTitle(event.target.value)}
-                    />
-                  </label>
-                  <label>
-                    作者
-                    <input
-                      value={author}
-                      maxLength={100}
-                      onChange={(event) => setAuthor(event.target.value)}
-                      placeholder="不确定可留空"
-                    />
-                  </label>
-                  <NativeSelect label="图书分类" value={publishCategory} onChange={setPublishCategory} disabled={optionsStatus !== "ready" || busy}
-                    options={catalogChoices(options.categories, publishCategory, originalChoices?.category)} message={categoryIssue} />
-                  <InlineChoice label="适读年龄" value={publishAge} onChange={setPublishAge} disabled={optionsStatus !== "ready" || busy}
-                    options={catalogChoices(options.ages, publishAge, originalChoices?.age)} message={ageIssue} />
-                  <InlineChoice label="新旧程度" value={condition} onChange={setCondition} disabled={optionsStatus !== "ready" || busy}
-                    options={catalogChoices(options.conditions, condition, originalChoices?.condition)} message={conditionIssue} />
-                  <NativeSelect label="所属系列（选填）" value={publishSeries} onChange={value => { setPublishSeries(value); if (!value) setSeriesOrder(""); }}
-                    disabled={seriesStatus !== "ready" || busy} message={seriesIssue}
-                    options={[{value:"",label:"单本图书"},...ownedSeries.map(item=>({value:item.id,label:item.name}))]} />
-                  <label>系列册序（选填）<input type="number" min="1" max="10000" disabled={!publishSeries} value={seriesOrder} onChange={e=>setSeriesOrder(e.target.value)} placeholder="例如 1" /></label>
-                  <label className="full-field">
-                    <span className="summary-label"><span>简单介绍</span><button type="button" disabled={!title.trim() || !!assistBusy} onClick={() => void generateSummary()}>{assistBusy === "summarize" ? "检索中…" : "✦ AI 检索并生成"}</button></span>
-                    <textarea
-                      value={summary}
-                      maxLength={1000}
-                      onChange={(event) => setSummary(event.target.value)}
-                      rows={4}
-                      placeholder="说说这本书的故事、主题或孩子喜欢它的原因"
-                    />
-                    <AiBusyNote
-                      text={summarizeNotice}
-                      busy={assistBusy === "summarize"}
-                      errorText="AI 检索简介暂未完成，可手动填写或调整书名/作者后重试。"
-                    />
-                  </label>
-                </div>
-                <label className="audience-check"><input type="checkbox" checked={nonChildren} onChange={event => setNonChildren(event.target.checked)} /><span><strong>非儿童读物</strong><small>AI 会依据检索资料标记；如果判断有误，可以手动调整。标记不会阻止发布。</small></span></label>
-                {summarySources.length > 0 && <div className="summary-sources"><span>资料来源：</span>{summarySources.map((source, index) => <a key={`${source.url}-${index}`} href={source.url} target="_blank" rel="noopener noreferrer">{source.title}</a>)}</div>}
-                <label className="confirm-check">
-                  <input
-                    type="checkbox"
-                    checked={privacyConfirmed}
-                    onChange={(event) =>
-                      setPrivacyConfirmed(event.target.checked)
-                    }
-                  />
-                  我已核对图书信息，内容不含孩子姓名、电话或住址
-                </label>
-                <button
-                  className="primary-button"
-                  disabled={busy || !!assistBusy || !title.trim() || !!publishIssue}
-                  onClick={publish}
-                >
-                  {editingBookId ? "保存修改" : "确认发布"}
-                </button>
-              </div>
-              <aside className="publish-aside">
-                <div className="aside-cover"><span>✦</span><strong>一本闲置书<br />下一段新旅程</strong></div>
-                <h3>发布后会怎样？</h3>
-                <ol>
-                  <li>其他家庭可在找书页看到这本书</li>
-                  <li>申请后由你确认交接地点并同意</li>
-                  <li>借方取书后确认，归还时由你确认收回</li>
-                </ol>
-              </aside>
-            </div>
-          </>
-        )}
+        {page === "publish" && family && <PublishBook
+          key={`${family.id}:${publishEditingBook?.id || "new"}`}
+          familyId={family.id} book={publishEditingBook} options={options} optionsStatus={optionsStatus}
+          series={ownedSeries} seriesStatus={seriesStatus} flash={flash}
+          published={message => {
+            setEditingBook(null); setPage("library"); setLibraryTab("my"); flash(message);
+            void refresh().catch(error => flash(`图书已保存，列表更新失败：${(error as Error).message}`));
+          }}
+        />}
         {page === "tasks" && <>
           <div className="page-title"><h1>我的借阅</h1><p>先看看需要你处理的事</p></div>
           <div className="tabs borrowing-tabs">{([{value:"progress",label:"进行中"},{value:"done",label:"已结束"},{value:"all",label:"全部"}] as const).map(t=>{
@@ -1051,7 +822,6 @@ function App() {
         </div>
       )}
       {pendingAvatar && <CoverCropDialog key={pendingAvatar.name + pendingAvatar.lastModified} kind="avatar" file={pendingAvatar} onClose={() => setPendingAvatar(null)} onUse={(image, bytes) => { setAvatarImage(image); setAvatarBytes(bytes); setAvatarChanged(true); setPendingAvatar(null); }} />}
-      {pendingCover && <CoverCropDialog file={pendingCover} onClose={() => setPendingCover(null)} onUse={(image, bytes) => { setCoverImage(image); setCoverBytes(bytes); setCoverChanged(true); setNonChildren(false); setPendingCover(null); void recognize(image); }} />}
     </div>
   );
 }

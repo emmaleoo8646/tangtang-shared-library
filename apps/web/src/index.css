@@ -109,6 +109,18 @@ button { transition: color 160ms, background-color 160ms, border-color 160ms; }
 .publish-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; align-items: start; gap: 20px; }
 .publish-form, .publish-aside { padding: 24px; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; }
 .publish-aside { padding: 20px; position: sticky; top: 96px; }
+.publish-fields { min-width:0; margin:0; padding:0; border:0; }
+.publish-fields > .primary-button { width:100%; }
+.publish-draft-status { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px 16px; margin:0 0 16px; color:var(--green); font-size:13px; line-height:1.6; }
+.publish-draft-status--error { color:var(--accent); }
+.publish-draft-status .text-button { min-height:44px; flex:none; color:var(--muted); }
+.publish-supplement { margin-top:20px; padding:0 16px; border:1px solid var(--line); border-radius:var(--radius); }
+.publish-supplement-toggle { display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; min-height:64px; padding:12px 0; border:0; background:none; text-align:left; }
+.publish-supplement-toggle > span:first-child { display:grid; gap:4px; min-width:0; }
+.publish-supplement-toggle strong { font-size:15px; font-weight:600; }
+.publish-supplement-toggle small { color:var(--muted); font-size:12px; line-height:1.6; }
+.publish-supplement-indicator { display:flex; flex:none; align-items:center; gap:8px; }
+#publish-supplement-fields { padding:4px 0 16px; }
 .form-section-head { display: flex; align-items: center; gap: 12px; padding-bottom: 20px; margin-bottom: 20px; border-bottom: 1px solid var(--line); }
 .form-section-head p { font-size: 13px; line-height: 1.6; color: var(--muted); margin-top: 4px; }
 .step-number { flex: none; display: grid; place-items: center; width: 36px; height: 36px; background: var(--accent-soft); color: var(--accent); border-radius: 50%; font-weight: 600; }
@@ -150,6 +162,7 @@ input::placeholder, textarea::placeholder { color: #8a8a8a; }
 .choice-field[aria-invalid="true"] .choice-message, .choice-message--invalid { color:#b44735; }
 .native-choice:disabled { opacity:.6; cursor:not-allowed; }
 .summary-label { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.summary-field { display:grid; gap:8px; }
 .summary-label button { min-height: 44px; padding: 0; border: 0; background: none; color: var(--accent); font-size: 13px; }
 .summary-sources { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; color: var(--muted); font-size: 12px; }
 .summary-sources a { color: var(--accent); }

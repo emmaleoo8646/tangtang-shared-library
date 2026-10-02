@@ -126,7 +126,7 @@ for (const width of [320, 390, 1440]) test(`auto selection and direct confirmati
   const { page, requests } = session;
   try {
     await publish(page); await upload(page, { large: true });
-    await expect(page.getByRole("status")).toHaveText("已自动选择封面，可调整后确认");
+    await expect(page.getByRole("dialog").getByRole("status")).toHaveText("已自动选择封面，可调整后确认");
     const crop = await cropStyle(page);
     assert.ok(crop.x < 25 && crop.x > 20 && crop.y < 14 && crop.y > 10);
     assert.ok(crop.x + crop.width >= 75 && crop.y + crop.height >= 86);
@@ -157,7 +157,7 @@ test("manual keyboard and pointer adjustment stop detection, and late results ne
   const { page, requests } = session;
   try {
     await publish(page); await upload(page);
-    await expect(page.getByRole("status")).toHaveText("正在识别封面边缘…");
+    await expect(page.getByRole("dialog").getByRole("status")).toHaveText("正在识别封面边缘…");
     await page.locator(".ReactCrop__drag-handle.ord-se").press("ArrowLeft");
     await expect.poll(async () => (await cropStyle(page)).width).toBeLessThan(100);
     const manual = await cropStyle(page);
@@ -181,7 +181,7 @@ test("flat images and worker timeouts preserve the full image and allow confirma
     const { page, requests } = session;
     try {
       await publish(page); await upload(page, { blank: true });
-      await expect(page.getByRole("status")).toHaveText("未能准确识别边缘，请手动调整");
+      await expect(page.getByRole("dialog").getByRole("status")).toHaveText("未能准确识别边缘，请手动调整");
       assert.deepEqual(await cropStyle(page), { x: 0, y: 0, width: 100, height: 100 });
       if (workers === "held") {
         assert.equal(await page.evaluate(() => window.__cropWorkers[0].terminated), true);
@@ -200,7 +200,7 @@ test("worker errors fall back without preventing manual confirmation", async () 
   try {
     await publish(page); await upload(page);
     await page.evaluate(() => window.__cropWorkers[0].onerror(new Event("error", { cancelable: true })));
-    await expect(page.getByRole("status")).toHaveText("未能准确识别边缘，请手动调整");
+    await expect(page.getByRole("dialog").getByRole("status")).toHaveText("未能准确识别边缘，请手动调整");
     await page.getByRole("button", { name: "使用此封面", exact: true }).click();
     await expect.poll(() => requests.length).toBe(1);
   } finally { await session.close(); }
@@ -217,7 +217,7 @@ test("replacing the file and closing the dialog cancel old detection tasks", asy
     await deliver(page, 0);
     assert.deepEqual(await cropStyle(page), { x: 0, y: 0, width: 100, height: 100 });
     await deliver(page, 1);
-    await expect(page.getByRole("status")).toHaveText("已自动选择封面，可调整后确认");
+    await expect(page.getByRole("dialog").getByRole("status")).toHaveText("已自动选择封面，可调整后确认");
     await page.getByRole("button", { name: "关闭裁剪", exact: true }).click();
     assert.equal(await page.evaluate(() => window.__cropWorkers[1].terminated), true);
     await deliver(page, 1);
@@ -231,7 +231,7 @@ test("compression failures can be retried; preview remains optional and duplicat
   const { page, requests } = session;
   try {
     await publish(page); await upload(page);
-    await expect(page.getByRole("status")).toHaveText("已自动选择封面，可调整后确认");
+    await expect(page.getByRole("dialog").getByRole("status")).toHaveText("已自动选择封面，可调整后确认");
     const before = await cropStyle(page);
     await page.evaluate(() => { window.__failNextBlob = true; });
     await page.getByRole("button", { name: "使用此封面", exact: true }).click();
