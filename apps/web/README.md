@@ -15,7 +15,15 @@ npm run dev
 
 `npm run check` 包含 lint、借阅摘要测试、TypeScript 检查和构建。
 
-`npm run test:browser` 使用模拟 API 验证所有选择入口、保存回填、后台选项更新、加载失败、过期筛选缓存和 320／390／1440px 布局，不访问真实业务数据；会启动并关闭本机端口 5196 的 Vite 服务。默认使用本机 Chrome，可通过 `BROWSER_CHANNEL=chromium` 使用已安装的 Playwright Chromium，或安装 Playwright WebKit 后运行 `BROWSER_ENGINE=webkit npm run test:browser`。原生下拉的系统面板仍需在 iPhone Safari、Android Chrome 和微信内置浏览器真机验收。
+`npm run test:browser` 使用模拟 API 验证所有选择入口、保存回填、后台选项更新、加载失败、过期筛选缓存、封面裁剪和 320／390／1440px 布局，不访问真实业务数据；会启动并关闭本机端口 5196、5197 的 Vite 服务。默认使用本机 Chrome，可通过 `BROWSER_CHANNEL=chromium` 使用已安装的 Playwright Chromium，或安装 Playwright WebKit 后运行 `BROWSER_ENGINE=webkit npm run test:browser`。原生下拉的系统面板仍需在 iPhone Safari、Android Chrome 和微信内置浏览器真机验收。
+
+## 封面自动裁剪
+
+上传或拍照后，浏览器会自动识别封面边缘并预选矩形裁剪范围。用户可拖动或用键盘调整，也可直接点击“使用此封面”；“预览裁剪结果”为可选操作。原图和边缘检测仅在浏览器本地处理，检测超过 2 秒、失败或结果不明确时保留整图，允许手动裁剪和确认。手动调整、换图和关闭裁剪都会取消旧检测，防止迟到结果覆盖用户选择。当前不做旋转或透视校正，低对比度、明显遮挡或复杂背景可能需要手动调整。
+
+确认时仍会将封面压缩为最长边不超过 960 像素、大小不超过 600 KB 的 JPEG，再调用现有书名识别流程。头像继续使用方形裁剪，并先预览再确认。
+
+`tests/coverDetection.test.ts` 验证轮廓检测和安全回退；`tests/browser/cover-crop.test.mjs` 验证真实 Worker、手动调整、取消与超时、压缩重试、重复确认和头像回归。测试照片为确定性的合成图，真实手机拍照效果还需用实际照片和手机浏览器验收。运行裁剪浏览器测试时设置 `COVER_CROP_SCREENSHOTS=1` 可把布局截图写入 `Dev-Scratch/screenshots/cover-crop/`。
 
 ## 同屋多本借阅与系列
 

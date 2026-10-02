@@ -564,7 +564,7 @@ function App() {
                   </div>
                   <div className="cover-upload-content">
                     <strong>添加封面照片</strong>
-                    <p>拍照或上传清晰封面，裁剪后自动识别书名并填写简介。{coverChanged && coverBytes ? `当前封面 ${Math.round(coverBytes / 1000)} KB。` : ""}</p>
+                    <p>拍照或上传清晰封面，自动选择封面范围；确认后识别书名并填写简介。{coverChanged && coverBytes ? `当前封面 ${Math.round(coverBytes / 1000)} KB。` : ""}</p>
                     <div className="cover-upload-actions">
                       <input ref={coverInput} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" className="visually-hidden" aria-label="拍照或上传图书封面" onChange={(event) => { chooseCover(event.target.files?.[0]); event.target.value = ""; }} />
                       <button type="button" className="secondary-button" onClick={() => coverInput.current?.click()}>{coverImage ? "更换照片" : "拍照 / 上传"}</button>
