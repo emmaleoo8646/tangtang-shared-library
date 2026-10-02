@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   allBooks,
@@ -485,6 +485,7 @@ export function Shops({
 }
 export function Browse({
   books,
+  booksLoaded,
   options,
   optionsStatus,
   cart,
@@ -492,6 +493,7 @@ export function Browse({
   onBrowseShops,
 }: {
   books: Book[];
+  booksLoaded: boolean;
   options: OptionLists;
   optionsStatus: ChoicesStatus;
   cart: BorrowCart;
@@ -543,10 +545,18 @@ export function Browse({
     setAge(nextAge);
     setCategory(nextCategory);
   }, [age, category, options, optionsStatus]);
+  const browseLoaded = optionsStatus !== "loading" && (shopId ? shop?.id === shopId : booksLoaded);
   useEffect(() => {
     const restoreY = scroll.current;
-    const restore = requestAnimationFrame(() => window.scrollTo(0, restoreY));
+    let restoring = true;
+    // Restore after data and filter controls settle, before recording scroll events.
+    const restore = browseLoaded ? requestAnimationFrame(() => {
+      window.scrollTo(0, restoreY);
+      restoring = false;
+      save();
+    }) : null;
     const save = () => {
+      if (restoring) return;
       scroll.current = window.scrollY;
       sessionStorage.setItem(
         "tt-browse",
@@ -573,10 +583,10 @@ export function Browse({
     );
     window.addEventListener("scroll", save);
     return () => {
-      cancelAnimationFrame(restore);
+      if (restore !== null) cancelAnimationFrame(restore);
       window.removeEventListener("scroll", save);
     };
-  }, [shopId, query, age, category, onlyAvailable]);
+  }, [shopId, query, age, category, onlyAvailable, browseLoaded, books.length, shopBooks.length]);
   useEffect(() => {
     let cancelled = false;
     if (!shopId) {
@@ -646,6 +656,24 @@ export function Browse({
         .map((b) => [b.shopId, { id: b.shopId, owner: b.owner, avatarUrl: b.ownerAvatarUrl }]),
     ).values(),
   ];
+  function shopShortcuts(placement: "desktop" | "mobile") {
+    return <section className={`shop-shortcuts shop-shortcuts--${placement}`} aria-label="推荐书屋">
+      <div className="shop-shortcuts-heading"><h2>逛逛小书屋</h2>
+        <button className="text-button" onClick={onBrowseShops}>更多书屋 ›</button>
+      </div>
+      <div className="shop-shortcuts-list">
+        {shops.slice(0, 4).map((s) => (
+          <button key={s.id} aria-label={`进入${s.owner}`} onClick={() => enterShop(s.id)}>
+            <FamilyAvatar name={s.owner} src={s.avatarUrl} decorative />
+            <span className="shortcut-info"><b>{s.owner}</b><small>
+              {books.filter(b => b.shopId === s.id && canBorrow(b, cart.familyId)).length}本可借 · {books.filter(b => b.shopId === s.id && !b.offShelf).length}本藏书
+            </small></span>
+            <LibraryIcon name="chevron" />
+          </button>
+        ))}
+      </div>
+    </section>;
+  }
   return (
     <>
       {shopId ? (
@@ -687,14 +715,15 @@ export function Browse({
           </div>
         </section>
       ) : <section className="reading-hero">
-        <div>
+        <div className="reading-hero-copy">
           <p className="eyebrow">分享闲置童书 · 免费借阅</p>
           <h1>一起借几本，<br />带一袋故事回家。</h1>
           <p>发现喜欢的书，走进书屋，一次借齐几本。</p>
         </div>
+        <h1 className="mobile-home-intro">分享童书 · 免费借阅</h1>
         <img src="/brand.png" alt="两个孩子在书屋分享图书" />
       </section>}
-      <section className="browse-tools">
+      <section className={`browse-tools${!shopId ? " browse-tools--home" : ""}`}>
         <div className="browse-search">
           <LibraryIcon name="search" />
           <input
@@ -712,7 +741,7 @@ export function Browse({
             </button>
           )}
         </div>
-        <div className="browse-filters">
+        <div className={`browse-filters${!shopId ? " browse-filters--home" : ""}`}>
           <div className="category-pills">
             {["全部", ...options.categories.map((o) => o.label)].map((c) => (
               <button
@@ -729,6 +758,20 @@ export function Browse({
               </button>
             ))}
           </div>
+          {!shopId && <div className="home-category-filter">
+            <NativeSelect
+              hideLabel
+              disabled={optionsStatus !== "ready"}
+              message={choicesStatusMessage(optionsStatus)}
+              label="图书分类"
+              value={category}
+              options={[
+                { value: "全部", label: "全部分类" },
+                ...options.categories.map(o => ({ value: o.label, label: o.label })),
+              ]}
+              onChange={value => { scroll.current = 0; setCategory(value); }}
+            />
+          </div>}
           <div className="browse-age">
             <NativeSelect
               hideLabel
@@ -759,27 +802,14 @@ export function Browse({
           </div>
         </div>
       </section>
-      {!shopId && (
-          <section className="shop-shortcuts" aria-label="推荐书屋">
-            <div className="shop-shortcuts-heading"><h2>逛逛小书屋</h2>
-              <button className="text-button" onClick={onBrowseShops}>更多书屋 ›</button>
-            </div>
-            <div className="shop-shortcuts-list">
-            {shops.slice(0, 4).map((s) => (
-              <button key={s.id} aria-label={`进入${s.owner}`} onClick={() => enterShop(s.id)}>
-                <FamilyAvatar name={s.owner} src={s.avatarUrl} decorative />
-                <span className="shortcut-info"><b>{s.owner}</b><small>
-                  {books.filter(b => b.shopId === s.id && canBorrow(b, cart.familyId)).length}本可借 · {books.filter((b) => b.shopId === s.id && !b.offShelf).length}本藏书
-                </small></span>
-                <LibraryIcon name="chevron" />
-              </button>
-            ))}
-            </div>
-          </section>
-      )}
-      <div className="section-heading">
+      {!shopId && shopShortcuts("desktop")}
+      <div className={`section-heading${!shopId ? " home-results-heading" : ""}`}>
         <h2>{loading ? "正在打开书屋…" : `找到 ${results.length} 本书`}</h2>
-        <span>点封面看详情 · 直接选书</span>
+        <span className="browse-hint">点封面看详情 · 直接选书</span>
+        {!shopId && <label className="home-availability">
+          <input type="checkbox" checked={onlyAvailable} onChange={e => setOnlyAvailable(e.target.checked)} />
+          只看可借
+        </label>}
       </div>
       {error && <p role="alert">{error}</p>}
       {!loading && !results.length && (
@@ -800,12 +830,12 @@ export function Browse({
         </div>
       )}
       <div className="reading-grid">
-        {displayGroups.map(({ key, kind, book, rows, all }) => {
+        {displayGroups.map(({ key, kind, book, rows, all }, index) => {
           const isSeries = kind === "series";
           const eligible = selectionPresentation(rows, cart.selected, cart.familyId);
           const own = isOwnBook(book, cart.familyId);
           const count = own ? all.filter(b => b.available).length : all.filter(b => canBorrow(b, cart.familyId)).length;
-          return <article className={`reading-card ${isSeries ? "reading-series" : ""} ${rows.some(cart.selected) ? "is-selected" : ""}`} key={key}>
+          return <Fragment key={key}><article className={`reading-card ${isSeries ? "reading-series" : ""} ${rows.some(cart.selected) ? "is-selected" : ""}`}>
             <button className="cover-link" aria-label={`查看${isSeries ? book.series!.name : book.title}详情`}
               onClick={() => isSeries ? setSeries(book) : setDetail(book)}>
               <BookVisual books={rows} series={isSeries} />
@@ -823,9 +853,12 @@ export function Browse({
                 <button className="text-button" onClick={() => setSeries(book)}>挑选分册{eligible.selectedCount ? ` · 已选${eligible.selectedCount}本` : ""} ›</button>
               </div> : <SelectBook book={book} cart={cart} />}
             </div>
-          </article>;
+          </article>
+            {!shopId && index === Math.min(4, displayGroups.length) - 1 && shopShortcuts("mobile")}
+          </Fragment>;
         })}
       </div>
+      {!shopId && !displayGroups.length && shopShortcuts("mobile")}
       {series && (
         <div style={detail ? { visibility: "hidden" } : undefined}>
           <Sheet

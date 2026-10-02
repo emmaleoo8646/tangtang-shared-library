@@ -53,6 +53,7 @@ function App() {
   const [page, setPage] = useState<Page>("discover");
   const [previousPage, setPreviousPage] = useState<Page>("discover");
   const [books, setBooks] = useState<Book[]>([]);
+  const [booksLoaded, setBooksLoaded] = useState(false);
   const [loans, setLoans] = useState<Loan[]>([]);
   const [family, setFamily] = useState<Family | null>(null);
   const [options, setOptions] = useState<OptionLists>({ categories: [], ages: [], conditions: [] });
@@ -143,7 +144,7 @@ function App() {
   }
   async function refresh() {
     await Promise.all([
-      allBooks().then(setBooks),
+      allBooks().then(rows => { setBooks(rows); setBooksLoaded(true); }),
       api<OptionLists>("/options").then(rows => {
         setOptions(rows);
         setOptionsStatus("ready");
@@ -527,7 +528,7 @@ function App() {
         </div>
       </header>
       <main className={`main-content page-${page} ${cart.carts.length && ["discover","shops","detail"].includes(page) ? "with-borrow-cart" : ""}`}>
-        {page === "discover" && <Browse key={browseKey} books={books} options={options} optionsStatus={optionsStatus} cart={cart} onShopChange={setCurrentShop} onBrowseShops={() => go("shops")} />}
+        {page === "discover" && <Browse key={browseKey} books={books} booksLoaded={booksLoaded} options={options} optionsStatus={optionsStatus} cart={cart} onShopChange={setCurrentShop} onBrowseShops={() => go("shops")} />}
         {page === "shops" && <Shops books={books} enterShop={continueShop} />}
         {page === "detail" && selectedBook && (
           <>

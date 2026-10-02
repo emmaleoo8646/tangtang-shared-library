@@ -13,9 +13,11 @@ npm run dev
 
 主导航为“找书、逛书屋、借阅、我的书屋”；发布入口在我的书屋内。手机与桌面共用 demo 的配色、封面比例和线条图标。发布／编辑的适读年龄、新旧程度及家庭页孩子年龄使用直接单选；图书分类、所属系列及找书／书屋的年龄筛选使用系统原生下拉。借阅页按“全部、进行中、已结束”查看，整批只有在每本都结束时才归入已结束。旧单本记录使用相同布局，仍通过原有单本接口处理。
 
+手机找书首页（宽度不超过700px）使用简短介绍、搜索、并排的分类／年龄下拉及图书列表；“只看可借”位于结果标题旁。推荐书屋显示在前4张图书卡片之后（系列计为一张）；不足4张时显示在现有卡片之后，无结果时显示在空状态之后。搜索与筛选随页面滚动，筛选和滚动位置继续按会话保留。桌面首页与单独书屋页面沿用原有布局。
+
 `npm run check` 包含 lint、借阅摘要测试、TypeScript 检查和构建。
 
-`npm run test:browser` 使用模拟 API 验证所有选择入口、保存回填、后台选项更新、加载失败、过期筛选缓存、封面裁剪和 320／390／1440px 布局，不访问真实业务数据；会启动并关闭本机端口 5196、5197 的 Vite 服务。默认使用本机 Chrome，可通过 `BROWSER_CHANNEL=chromium` 使用已安装的 Playwright Chromium，或安装 Playwright WebKit 后运行 `BROWSER_ENGINE=webkit npm run test:browser`。原生下拉的系统面板仍需在 iPhone Safari、Android Chrome 和微信内置浏览器真机验收。
+`npm run test:browser` 使用模拟 API 验证所有选择入口、保存回填、后台选项更新、加载失败、过期筛选缓存、封面裁剪及手机首页的 320／390／700／701／1440px 布局，不访问真实业务数据；会启动并关闭本机端口 5196、5197、5198 的 Vite 服务。默认使用本机 Chrome，可通过 `BROWSER_CHANNEL=chromium` 使用已安装的 Playwright Chromium，或安装 Playwright WebKit 后运行 `BROWSER_ENGINE=webkit npm run test:browser`。设置 `HOME_SCREENSHOTS=1` 可将首页截图写入 `Dev-Scratch/mobile-home-review/`。原生下拉的系统面板仍需在 iPhone Safari、Android Chrome 和微信内置浏览器真机验收。
 
 ## 封面自动裁剪
 

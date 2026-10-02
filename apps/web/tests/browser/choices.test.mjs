@@ -270,7 +270,8 @@ test("expired age and category filters reset the UI and cache; retired book filt
   try {
     const age = page.getByRole("combobox", { name: "适读年龄", exact: true });
     await expect(age).toHaveValue("全部");
-    await expect(page.locator(".category-pills").getByRole("button", { name: "全部", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("combobox", { name: "图书分类", exact: true })).toHaveValue("全部");
+    await page.clock.runFor(50);
     await expect.poll(() => page.evaluate(() => JSON.parse(sessionStorage.getItem("tt-browse")))).toMatchObject({ age: "全部", category: "全部", scroll: 0 });
     state.options.ages[0].active = false;
     await refresh(page);
