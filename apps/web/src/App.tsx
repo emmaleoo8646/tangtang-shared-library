@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { api, allBooks, ApiError, type Book, type Family, type Loan, type OptionLists } from "./api";
-import { SelectBook, Browse, Shops, CartPanel, GroupCard, groupLoans, useBorrowCart } from "./Borrowing";
+import { SelectBook, Browse, Shops, CartPanel, GroupCard, useBorrowCart } from "./Borrowing";
 import { InlineChoice, NativeSelect } from "./components/Choices";
 import { catalogChoices, catalogChoiceIssue, choicesStatusMessage, defaultChoice, type ChoicesStatus } from "./choicePresentation";
 import { LibraryIcon, type LibraryIconName } from "./components/LibraryIcon";
-import { loanPresentation } from "./loanPresentation";
+import { groupLoans, loanPresentation, needsAttention, prioritizeLoanGroups } from "./loanPresentation";
 import { CoverCropDialog } from "./CoverCropDialog";
 import { AiBusyNote } from "./components/AiBusyNote";
 import { OwnBooks } from "./OwnBooks";
@@ -37,18 +37,6 @@ const nav: { page: Page; label: string; icon: LibraryIconName }[] = [
   { page: "library", label: "我的书屋", icon: "home" },
 ];
 
-function needsAttention(loan: Loan) {
-  if (loan.stage === "REQUESTED" || loan.stage === "APPROVED") return loan.isOwner;
-  if (loan.stage === "HANDOFF_AGREED") {
-    return loan.isOwner
-      ? loan.borrowerLoanConfirmed && !loan.ownerLoanConfirmed
-      : !loan.borrowerLoanConfirmed;
-  }
-  if (loan.stage === "RETURN_REQUESTED") return loan.isOwner;
-  return loan.stage === "LENT" && loan.isOwner && loan.renewalRequested && !loan.renewed;
-}
-
-
 function App() {
   const [page, setPage] = useState<Page>("discover");
   const [previousPage, setPreviousPage] = useState<Page>("discover");
@@ -67,7 +55,7 @@ function App() {
   const [seriesStatus, setSeriesStatus] = useState<ChoicesStatus>("loading");
   const [publishSeries, setPublishSeries] = useState("");
   const [seriesOrder, setSeriesOrder] = useState("");
-  const [taskTab, setTaskTab] = useState<"all" | "progress" | "done">("all");
+  const [taskTab, setTaskTab] = useState<"all" | "progress" | "done">("progress");
   const [libraryTab, setLibraryTab] = useState<"my" | "borrowed" | "lent">(
     "my",
   );
@@ -197,7 +185,8 @@ function App() {
     setProfilePhone(family.phone); setNickname(family.displayName);
     setAvatarImage(family.avatarUrl || ""); setAvatarChanged(false); setAvatarBytes(0);
   }, [page, family?.id]);
-  function go(target: Page) {
+  function go(target: Page, borrowingTab: "all" | "progress" | "done" = "progress") {
+    if (target === "tasks") setTaskTab(borrowingTab);
     if (target !== "discover" && target !== "shops" && target !== "detail" && !family) {
       setRequestedPage(target);
       switchAuthMode("login");
@@ -478,10 +467,15 @@ function App() {
   }
   function renderRecords(rows: Loan[]) {
     // Include the complete group so a mixed batch never hides its rejected or returned books.
-    return groupLoans(rows).map(group => <GroupCard books={books} familyId={family?.id || ""}
-      key={group[0].groupId || group[0].id}
-      loans={group[0].groupId ? loans.filter(l=>l.groupId===group[0].groupId) : group}
-      busy={busy} defaultPlace={loans.find(l => l.isOwner && l.place)?.place || ""} act={groupAction} />);
+    const groups = prioritizeLoanGroups(groupLoans(rows).map(group =>
+      group[0].groupId ? loans.filter(l => l.groupId === group[0].groupId) : group));
+    const todoCount = groups.filter(group => group.some(needsAttention)).length;
+    return groups.map((group, index) => <Fragment key={group[0].groupId || group[0].id}>
+      {todoCount > 0 && index === 0 && <h2 className="loan-section-title">需要你处理 · {todoCount} 条</h2>}
+      {todoCount > 0 && index === todoCount && <h2 className="loan-section-title">{taskTab === "progress" ? "其他进行中的借阅" : "其他借阅"}</h2>}
+      <GroupCard books={books} familyId={family?.id || ""} loans={group}
+        busy={busy} defaultPlace={loans.find(l => l.isOwner && l.place)?.place || ""} act={groupAction} />
+    </Fragment>);
   }
   async function organize(name: string, summary: string, ids: string[]) {
     return (await run(() => api('/series', 'POST', { name, summary, bookIds: ids }), '已整理为系列')) ?? false;
@@ -655,14 +649,14 @@ function App() {
           </>
         )}
         {page === "tasks" && <>
-          <div className="page-title"><h1>我的借阅</h1><p>和一家书屋的几本书，放在一起看。</p></div>
-          <div className="tabs borrowing-tabs">{([{value:"all",label:"全部"},{value:"progress",label:"进行中"},{value:"done",label:"已结束"}] as const).map(t=>{
+          <div className="page-title"><h1>我的借阅</h1><p>先看看需要你处理的事</p></div>
+          <div className="tabs borrowing-tabs">{([{value:"progress",label:"进行中"},{value:"done",label:"已结束"},{value:"all",label:"全部"}] as const).map(t=>{
             const count=groupLoans(loans).filter(g=>t.value==="all" || (t.value==="done" ? loanPresentation(g).done : !loanPresentation(g).done)).length;
-            return <button key={t.value} className={taskTab===t.value?"selected":""} onClick={()=>setTaskTab(t.value)}>{t.label}<span className="tab-count">{count}</span></button>;
+            return <button key={t.value} aria-pressed={taskTab===t.value} className={taskTab===t.value?"selected":""} onClick={()=>setTaskTab(t.value)}>{t.label}<span className="tab-count">{count}</span></button>;
           })}</div>
           <div className="loan-list">{(() => {
             const rows=groupLoans(loans).filter(g=>taskTab==="all" || (taskTab==="done" ? loanPresentation(g).done : !loanPresentation(g).done)).flat();
-            return rows.length ? renderRecords(rows) : <div className="empty-state"><LibraryIcon name="book"/><h3>{taskTab==="done" ? "还没有结束的借阅" : "目前没有进行中的借阅"}</h3><p>选几本喜欢的书，借阅进展会显示在这里。</p><button className="secondary-button" onClick={()=>go("discover")}>去找书</button></div>;
+            return rows.length ? renderRecords(rows) : <div className="empty-state"><LibraryIcon name="book"/><h3>{taskTab==="done" ? "还没有结束的借阅" : taskTab==="all" ? "还没有借阅记录" : "目前没有进行中的借阅"}</h3><p>选几本喜欢的书，借阅进展会显示在这里。</p><button className="secondary-button" onClick={()=>go("discover")}>去找书</button></div>;
           })()}</div>
         </>}
         {page === "library" && (
@@ -711,7 +705,7 @@ function App() {
                 {groupLoans(loans.filter(loan => libraryTab === "lent" ? loan.isOwner : !loan.isOwner)).map(group => {
                   const first = group[0];
                   const counts = group.reduce<Record<string,number>>((v,loan) => { v[loan.stage] = (v[loan.stage] || 0) + 1; return v; }, {});
-                  return <button key={first.groupId || first.id} onClick={() => { setTaskTab(group.some(loan => active.has(loan.stage)) ? "progress" : "done"); go("tasks"); }}><span><strong>{first.groupId ? `${first.isOwner ? first.borrower : first.owner} · ${group.length}本` : first.bookTitle}</strong><small>{Object.entries(counts).map(([stage,count]) => `${count}本${statusText[stage]}`).join("，")}</small></span><span>›</span></button>;
+                  return <button key={first.groupId || first.id} onClick={() => go("tasks", group.some(loan => active.has(loan.stage)) ? "progress" : "done")}><span><strong>{first.groupId ? `${first.isOwner ? first.borrower : first.owner} · ${group.length}本` : first.bookTitle}</strong><small>{Object.entries(counts).map(([stage,count]) => `${count}本${statusText[stage]}`).join("，")}</small></span><span>›</span></button>;
                 })}
               </div>
             )}

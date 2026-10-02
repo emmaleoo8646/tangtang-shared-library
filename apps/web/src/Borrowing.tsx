@@ -10,7 +10,7 @@ import {
 } from "./api";
 import { SharedBookCover } from "./components/SharedBookCover";
 import { LibraryIcon } from "./components/LibraryIcon";
-import { loanPresentation } from "./loanPresentation";
+import { formatLoanDate, loanNextStep, loanPresentation } from "./loanPresentation";
 import { selectionPresentation } from "./selectionPresentation";
 import { canBorrow, groupCatalog, isOwnBook, matchesCatalog, sortVolumes } from "./catalogPresentation";
 import { BookVisual } from "./components/BookVisual";
@@ -1088,16 +1088,6 @@ const loanStatus: Record<string, string> = {
   REJECTED: "未同意",
   EXPIRED: "已超时",
 };
-export function groupLoans(loans: Loan[]) {
-  const groups: Loan[][] = [];
-  for (const loan of loans) {
-    const group =
-      loan.groupId && groups.find((rows) => rows[0].groupId === loan.groupId);
-    if (group) group.push(loan);
-    else groups.push([loan]);
-  }
-  return groups;
-}
 export function GroupCard({
   loans,
   busy,
@@ -1145,6 +1135,8 @@ export function GroupCard({
   const lent = loans.filter((l) =>
     ["LENT", "RETURN_REQUESTED"].includes(l.stage),
   );
+  const returnedToOwner = lent.filter((l) => l.stage === "RETURN_REQUESTED");
+  const stillLent = lent.filter((l) => l.stage === "LENT");
   const renew = loans.filter(
     (l) => l.stage === "LENT" && !l.renewed && !l.renewalRequested,
   );
@@ -1155,6 +1147,7 @@ export function GroupCard({
     (l) => l.stage === "LENT" && !l.borrowerReturnConfirmed,
   );
   const presentation = loanPresentation(loans);
+  const nextStep = loanNextStep(loans);
   async function perform(action: string, rows: Loan[], declineRest = false) {
     try {
       await act(first.groupId || first.id, action, {
@@ -1198,7 +1191,7 @@ export function GroupCard({
           {label}
           {rows.length}本
         </button>
-        {rows.length > 1 && (
+        {rows.length > 1 && partialLabel && (
           <button
             className="text-button"
             disabled={busy}
@@ -1211,94 +1204,19 @@ export function GroupCard({
     );
   }
   return (
-    <article className="loan-group-card">
+    <article className={`loan-group-card${nextStep.needsAttention ? " needs-attention" : ""}`}>
+      <div className="loan-group-badges">
+        <span className={`loan-direction ${first.isOwner ? "outgoing" : "incoming"}`}>{nextStep.direction}</span>
+        {nextStep.needsAttention && <span className="loan-state">待处理</span>}
+        {presentation.done && <span className="loan-state ended">已结束</span>}
+      </div>
       <div className="loan-group-heading">
         <FamilyAvatar name={first.isOwner ? first.borrower : first.owner} src={first.isOwner ? first.borrowerAvatarUrl : first.ownerAvatarUrl} decorative />
         <div>
-          <h2>
-            {first.isOwner
-              ? `${first.borrower}向你借书`
-              : `向${first.owner}借书`}{" "}
-            · {loans.length}本
-          </h2>
-          <p>{presentation.summary}</p>
+          <h2>{nextStep.title}<span className="loan-next-title">{nextStep.next}</span></h2>
+          <p>{nextStep.hint}</p>
+          {nextStep.todos.length > 1 && <p className="loan-other-todos">另外：{nextStep.todos.slice(1).map(todo => `${todo.count} 本${todo.text}`).join("，")}</p>}
         </div>
-        <span className={`loan-state ${presentation.done ? "ended" : presentation.step === 2 ? "reading" : ""}`}>
-          {presentation.done ? "已结束" : pending.length ? "待审批" : awaitingPlace.length ? "待确认地点" : receive.length ? "待取书" : loans.some(l => l.stage === "RETURN_REQUESTED") ? "待收回" : "阅读中"}
-        </span>
-      </div>
-      <p className="loan-date">
-        申请于{" "}
-        {new Date(first.requestedAt).toLocaleString("zh-CN", {
-          month: "numeric",
-          day: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-        })}
-      </p>
-      <div className="loan-cover-list">
-        {loans.map((l) => {
-          const book = books.find((b) => b.id === l.bookId) || {
-            id: l.bookId,
-            title: l.bookTitle,
-            coverUrl: null,
-          };
-          return (
-            <div key={l.id}>
-              <SharedBookCover book={book} />
-              <span>{l.bookTitle}</span>
-              <small>{loanStatus[l.stage]}</small>
-            </div>
-          );
-        })}
-      </div>
-      {(!presentation.done || loans.some((l) => l.stage === "RETURNED")) && (
-        <ol className="loan-progress" aria-label="借阅进度">
-          {["提交申请", "确认取书", "阅读中", "归还完成"].map((label, i) => (
-            <li key={label} className={i < presentation.completedSteps ? "done" : i === presentation.step ? "current" : ""}>
-              <span>
-                {i < presentation.completedSteps ? <LibraryIcon name="check" /> : i + 1}
-              </span>
-              <small>{label}</small>
-            </li>
-          ))}
-        </ol>
-      )}
-      <div className="loan-next">
-        <strong>
-          {presentation.done
-            ? "本次借阅已结束"
-            : pending.length
-              ? first.isOwner
-                ? "有新申请，等你确认"
-                : "等待书主同意"
-              : awaitingPlace.length
-                ? first.isOwner
-                  ? "请确认公共交接地点"
-                  : "等待书主确认交接地点"
-                : legacyHandoff.length
-                  ? first.isOwner
-                    ? "完成旧订单交接确认"
-                    : "等待书主完成交接确认"
-                  : receive.length
-                    ? first.isOwner
-                      ? "等待借方确认收到书"
-                      : "取到书后，在这里确认"
-                    : approveRenew.length && first.isOwner
-                      ? "借方申请续借"
-                      : first.isOwner && lent.length
-                        ? "收到归还的书后，确认收回"
-                        : "好故事，慢慢读"}
-        </strong>
-        <p>
-          {presentation.done
-            ? presentation.summary
-            : pending.length
-              ? "申请48小时内有效。"
-              : presentation.nearestDueAt
-                ? `最早到期：${new Date(presentation.nearestDueAt).toLocaleDateString("zh-CN")}；逐本到期日见完整清单。`
-                : "借方确认收到后开始14天借期。"}
-        </p>
       </div>
       {first.message && (
         <p className="detail-safety">借方留言：{first.message}</p>
@@ -1327,18 +1245,14 @@ export function GroupCard({
           {loans.find((l) => l.contactPhone)!.contactPhone}
         </p>
       )}
-      {first.isOwner
-        ? controls("approve", pending, "同意全部", "部分同意", true)
-        : controls("cancel", pending, "取消待审批的", "逐本取消")}
-      {first.isOwner && pending.length > 0 && (
-        <button
-          className="text-button"
-          disabled={busy}
-          onClick={() => void perform("decline", pending)}
-        >
-          全部不借 · {pending.length}本
-        </button>
-      )}
+      {first.isOwner ? pending.length > 0 && (
+        <div className="loan-approval-actions">
+          {controls("approve", pending, "同意 ", "部分同意", true)}
+          <button className="text-button" disabled={busy} onClick={() => void perform("decline", pending)}>
+            暂不同意
+          </button>
+        </div>
+      ) : controls("cancel", pending, "取消待审批的", "逐本取消")}
       {first.isOwner &&
         controls("set-place", awaitingPlace, "确认交接地点 · ", "", true)}
       {first.isOwner &&
@@ -1355,9 +1269,16 @@ export function GroupCard({
           "只收到部分",
         )}
       {first.isOwner &&
-        controls("confirm-return", lent, "已收回全部", "只收回部分")}
+        controls("confirm-return", returnedToOwner, "确认收回 ", "只收回部分")}
       {first.isOwner &&
         controls("approve-renew", approveRenew, "同意续借", "逐本同意续借")}
+      {first.isOwner && stillLent.length > 0 && (
+        <details className="loan-more">
+          <summary>确认收回</summary>
+          <p>收到归还的书后可直接确认，无需等待借方发送提醒。</p>
+          {controls("confirm-return", stillLent, "已收回全部", "只收回部分")}
+        </details>
+      )}
       {!first.isOwner && (renew.length > 0 || returnRequest.length > 0) && (
         <details className="loan-more">
           <summary>续借与归还</summary>
@@ -1370,15 +1291,55 @@ export function GroupCard({
           )}
         </details>
       )}
-      <details className="loan-more">
-        <summary>查看完整清单与逐本进展 · {loans.length}本</summary>
+      <details className="loan-more loan-details">
+        <summary>查看借阅详情 · {loans.length} 本</summary>
+        <p className="loan-detail-summary">{presentation.summary}</p>
+        <p className="loan-date">
+          申请于{" "}
+          {new Date(first.requestedAt).toLocaleString("zh-CN", {
+            timeZone: "Asia/Shanghai",
+            month: "numeric",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
+        </p>
+        <div className="loan-cover-list">
+          {loans.map((l) => {
+            const book = books.find((b) => b.id === l.bookId) || {
+              id: l.bookId,
+              title: l.bookTitle,
+              coverUrl: null,
+            };
+            return (
+              <div key={l.id}>
+                <SharedBookCover book={book} />
+                <span>{l.bookTitle}</span>
+                <small>{loanStatus[l.stage]}</small>
+              </div>
+            );
+          })}
+        </div>
+        {(!presentation.done || loans.some((l) => l.stage === "RETURNED")) && (
+          <ol className="loan-progress" aria-label="借阅进度">
+            {["提交申请", "确认取书", "阅读中", "归还完成"].map((label, i) => (
+              <li key={label} className={i < presentation.completedSteps ? "done" : i === presentation.step ? "current" : ""}>
+                <span>
+                  {i < presentation.completedSteps ? <LibraryIcon name="check" /> : i + 1}
+                </span>
+                <small>{label}</small>
+              </li>
+            ))}
+          </ol>
+        )}
+
         {loans.map((l) => (
           <div className="group-loan-row" key={l.id}>
             <strong>{l.bookTitle}</strong>
             <span>{loanStatus[l.stage]}</span>
             {l.dueAt && (
               <small>
-                到期：{new Date(l.dueAt).toLocaleDateString("zh-CN")}
+                到期：{formatLoanDate(l.dueAt)}
               </small>
             )}
             {l.renewalRequested && !l.renewed && <small>续借待处理</small>}

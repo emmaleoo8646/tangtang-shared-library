@@ -197,13 +197,24 @@
 .cart-conflict { margin-bottom:16px; }
 
 /* Borrowing: the next action and current step have the strongest hierarchy. */
-.loan-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); align-items:start; gap:16px; }
+.loan-list { display:grid; grid-template-columns:minmax(0,1fr); max-width:800px; align-items:start; gap:16px; }
 .loan-list > .empty-state { grid-column:1/-1; }
+.loan-section-title { grid-column:1/-1; margin:8px 0 0; font-size:17px; line-height:1.5; }
 .loan-group-card { min-width:0; padding:20px; border:1px solid var(--line); border-radius:var(--radius); background:#fff; }
+.loan-group-card.needs-attention { border-color:var(--accent); background:linear-gradient(var(--surface),#fff); }
+.loan-group-badges { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; }
+.loan-direction { padding:5px 12px; border-radius:20px; font-size:12px; font-weight:600; }
+.loan-direction.outgoing { background:var(--accent-soft); color:var(--accent); }
+.loan-direction.incoming { background:var(--green-soft); color:var(--green); }
 .loan-group-heading { display:flex; align-items:center; gap:12px; }
+.loan-group-heading > .shop-avatar { flex:none; align-self:flex-start; }
 .loan-group-heading > div { flex:1; min-width:0; }
-.loan-group-heading h2 { font-size:16px; overflow-wrap:anywhere; }
+.loan-group-heading h2 { font-size:17px; line-height:1.5; overflow-wrap:anywhere; }
+.loan-next-title { display:block; margin-top:2px; font-size:18px; color:var(--green); }
+.needs-attention .loan-next-title { color:var(--accent); }
+.loan-group-card:has(.loan-state.ended) .loan-next-title { color:var(--muted); }
 .loan-group-heading p { margin-top:4px; font-size:12px; color:var(--muted); line-height:1.6; }
+.loan-group-heading .loan-other-todos { color:var(--accent); }
 .loan-state { flex:none; border-radius:20px; padding:5px 10px; background:var(--accent-soft); color:var(--accent); font-size:12px; }
 .loan-state.ended { background:var(--surface); color:var(--muted); }
 .loan-state.reading { background:var(--green-soft); color:var(--green); }
@@ -224,19 +235,25 @@
 .loan-progress li.current { color:var(--accent); }
 .loan-progress li.current > span { border-color:var(--accent); background:var(--accent-soft); font-weight:600; }
 .loan-progress small { font-size:12px; line-height:1.4; text-align:center; }
-.loan-next { padding:14px 16px; border-radius:10px; margin-bottom:16px; background:var(--accent-soft); }
-.loan-next strong { font-size:14px; font-weight:600; color:var(--accent); }
-.loan-next p { margin-top:6px; color:var(--muted); font-size:12px; line-height:1.6; }
 .loan-group-card > p:not(.loan-date) { font-size:13px; line-height:1.6; margin:12px 0; overflow-wrap:anywhere; }
 .loan-group-card > .action-row { margin:20px 0 12px; gap:12px; }
 .loan-group-card > .action-row > .primary-button { flex:1; }
 .loan-group-card > .text-button { font-size:13px; }
+.loan-approval-actions { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin-top:16px; }
+.loan-approval-actions > .action-row { flex:1; gap:8px; }
+.loan-approval-actions .primary-button { flex:1; }
+.loan-approval-actions .action-row > .text-button { padding:8px 10px; border:1px solid var(--accent); border-radius:10px; }
+.loan-approval-actions > .text-button { color:var(--muted); }
+.loan-approval-actions button { font-size:13px; }
 .loan-more { margin-top:16px; border-top:1px solid var(--line); padding-top:8px; font-size:13px; color:var(--muted); }
 .loan-more > summary { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:44px; list-style:none; cursor:pointer; }
 .loan-more > summary::after { content:"›"; font-size:20px; }
 .loan-more[open] > summary::after { transform:rotate(90deg); }
 .loan-more > summary::-webkit-details-marker { display:none; }
 .loan-more .action-row { margin-top:12px; }
+.loan-more p { margin:8px 0; line-height:1.6; }
+.loan-details .loan-cover-list { margin-top:12px; }
+.loan-detail-summary { color:var(--muted); }
 .group-loan-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:12px 0; border-top:1px solid var(--line); font-size:13px; }
 .group-loan-row strong { flex:1; min-width:0; font-weight:500; }
 .group-loan-row small { flex-basis:100%; color:var(--muted); font-size:12px; }
@@ -369,8 +386,8 @@
   .cart-remove span { display:none; }
   .cart-group-actions { flex-wrap:wrap; }
   .loan-group-card { padding:16px; }
-  .loan-group-heading { gap:10px; flex-wrap:wrap; }
-  .loan-group-heading h2 { font-size:15px; }
+  .loan-group-heading { gap:12px; }
+  .loan-group-heading h2 { font-size:16px; }
   .loan-group-heading .shop-avatar { width:36px; height:36px; font-size:15px; }
   .loan-state { font-size:11px; padding:4px 8px; }
   .loan-cover-list > div { width:84px; }
@@ -391,5 +408,6 @@
   .cart-bar-actions > .text-button { font-size:11px; }
   .volume-row { gap:8px; }
   .volume-row .select-book { max-width:90px; }
-  .loan-state { margin-left:46px; }
+  .loan-group-card { padding:14px; }
+  .loan-group-heading { gap:10px; }
 }
